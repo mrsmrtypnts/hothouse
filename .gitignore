@@ -1,0 +1,23 @@
+.DS_Store
+__pycache__/
+*.pyc
+*.pyo
+*.swp
+
+# secrets
+.env
+
+# virtualenvs
+.venv/
+venv/
+
+# runtime data -- prompts, learned corpus, generated images. never commit.
+*-data/
+data/
+images/
+tree.json
+corpus.json
+*.png
+*.jpg
+*.jpeg
+*.webp
