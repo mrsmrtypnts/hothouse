@@ -1,0 +1,222 @@
+#!/usr/bin/env python3
+"""
+hoard — browse and search a local image collection by prompt keywords.
+
+On first run, transparently creates a private venv and installs its
+dependencies (see hoard/requirements.txt) — no manual pip install needed.
+"""
+
+import hashlib
+import subprocess
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+REQUIREMENTS = REPO_ROOT / "hoard" / "requirements.txt"
+VENV_DIR = Path.home() / ".local" / "share" / "hoard" / "venv"
+VENV_PYTHON = VENV_DIR / "bin" / "python3"
+REQUIREMENTS_HASH_FILE = VENV_DIR / ".requirements.sha256"
+
+
+def _requirements_hash() -> str:
+    return hashlib.sha256(REQUIREMENTS.read_bytes()).hexdigest()
+
+
+def _venv_is_current() -> bool:
+    return (
+        VENV_PYTHON.exists()
+        and REQUIREMENTS_HASH_FILE.exists()
+        and REQUIREMENTS_HASH_FILE.read_text().strip() == _requirements_hash()
+    )
+
+
+def _run(cmd: list[str]) -> None:
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        sys.stderr.write(result.stdout)
+        sys.stderr.write(result.stderr)
+        sys.exit(
+            f"hoard: command failed ({' '.join(cmd)}), see output above."
+        )
+
+
+def _venv_site_packages() -> Path:
+    # Standard POSIX venv layout. Safe to compute statically (rather than
+    # asking the venv itself) because the venv is always created from this
+    # exact running interpreter, so the version tag matches by construction.
+    return VENV_DIR / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}" / "site-packages"
+
+
+def _ensure_venv() -> None:
+    if _venv_is_current():
+        return
+    print("hoard: setting up its Python environment (first run only)...", file=sys.stderr)
+    VENV_DIR.parent.mkdir(parents=True, exist_ok=True)
+    _run([sys.executable, "-m", "venv", "--upgrade-deps", str(VENV_DIR)])
+    VENV_DIR.chmod(0o700)
+    _run([str(VENV_PYTHON), "-m", "pip", "install", "-r", str(REQUIREMENTS)])
+    _run([str(VENV_PYTHON), "-c", "import flask, PIL"])
+    REQUIREMENTS_HASH_FILE.write_text(_requirements_hash())
+
+
+# Rather than re-exec'ing into the venv's own python3 (which relies on that
+# interpreter correctly self-detecting it's running inside a venv — this can
+# silently fail depending on how python3 is installed/shimmed on a given
+# account), just add the venv's site-packages onto the current process's
+# sys.path. Safe because the venv was built from this exact interpreter.
+_ensure_venv()
+
+import argparse
+import site
+import webbrowser
+from threading import Timer
+
+site.addsitedir(str(_venv_site_packages()))
+sys.path.insert(0, str(REPO_ROOT))
+
+from hoard import db as dblib
+from hoard import scan as scanlib
+from hoard import server as serverlib
+
+
+def cmd_scan(args):
+    stats = scanlib.scan_directory(args.dir, rescan=args.rescan)
+    print(
+        f"Indexed {stats['indexed']}, skipped {stats['skipped']} unchanged, "
+        f"{stats['failed']} failed, {stats['removed']} removed."
+    )
+    if stats["empty_prompt"]:
+        print(
+            f"Note: {stats['empty_prompt']} of the indexed images had no extractable "
+            f"prompt (no 'parameters' text found — could be a plain photo, or an "
+            f"unrecognized metadata format). Run "
+            f"`hoard inspect <file>` on one of them to see what hoard actually found."
+        )
+    if stats["slow_fallback"]:
+        print(
+            f"Note: {stats['slow_fallback']} images needed the slow full-decode "
+            f"fallback (their metadata is stored after the image data) — this is "
+            f"the main thing that would make scanning slower than expected."
+        )
+
+
+def cmd_inspect(args):
+    path = Path(args.file).expanduser().resolve()
+    if not path.exists():
+        sys.exit(f"hoard: no such file: {path}")
+
+    if args.redact:
+        cmd_inspect_redacted(path)
+        return
+
+    raw = scanlib.extract_parameters_text(path)
+    print(f"File: {path}")
+    if raw is None:
+        print("No 'parameters' text (PNG) / UserComment (JPEG) found in this file's metadata.")
+        return
+    print("--- raw metadata text ---")
+    print(raw)
+    print("--- parsed ---")
+    from hoard.parse import parse_parameters
+    parsed = parse_parameters(raw)
+    print(f"positive_prompt: {parsed['positive_prompt']!r}")
+    print(f"negative_prompt: {parsed['negative_prompt']!r}")
+    print(f"params: {parsed['params']}")
+
+
+def cmd_inspect_redacted(path):
+    """Structural diagnostics only — never prints prompt text or pixel content."""
+    import re
+    print(f"File: {path.name}")  # basename only, not the full path
+
+    if path.suffix.lower() == ".png":
+        chunks = scanlib.list_png_chunks(path)
+        print("PNG chunks (file order):")
+        for c in chunks:
+            pos = "before IDAT" if c["before_idat"] else "after IDAT"
+            if "keyword" in c:
+                print(f"  {c['type']:6s} keyword={c['keyword']!r:22s} length={c['length']:>7d}  ({pos})")
+            else:
+                print(f"  {c['type']:6s} length={c['length']:>7d}  ({pos})")
+
+    raw, used_fallback = scanlib._extract_parameters_text_ex(path)
+    print(f"hoard extractor found text under 'parameters': {raw is not None} (used slow post-IDAT fallback: {used_fallback})")
+    if raw is None:
+        return
+
+    def char_desc(ch):
+        if ch is None:
+            return "<start of string>"
+        names = {"\n": "LF (\\n)", "\r": "CR (\\r)", "\t": "TAB", ",": "COMMA", " ": "SPACE"}
+        if ch in names:
+            return names[ch]
+        return repr(ch) if ch.isprintable() else f"U+{ord(ch):04X}"
+
+    print(f"  raw text length: {len(raw)} chars")
+    print(f"  control char counts: LF={raw.count(chr(10))} CR={raw.count(chr(13))} TAB={raw.count(chr(9))}")
+
+    idx = raw.find("Negative prompt:")
+    if idx == -1:
+        print("  'Negative prompt:' not found in raw text")
+    else:
+        print(f"  'Negative prompt:' found at offset {idx}, preceded by: {char_desc(raw[idx-1] if idx > 0 else None)}")
+
+    steps_match = re.search(r"Steps:\s*\d", raw)
+    if steps_match is None:
+        print("  'Steps:' pattern not found anywhere in raw text")
+    else:
+        idx = steps_match.start()
+        print(f"  'Steps:' pattern found at offset {idx}, preceded by: {char_desc(raw[idx-1] if idx > 0 else None)}")
+
+    from hoard.parse import parse_parameters
+    parsed = parse_parameters(raw)
+    pos_len = len(parsed["positive_prompt"])
+    neg_len = len(parsed["negative_prompt"])
+    print(f"  parsed positive_prompt: {'EMPTY' if pos_len == 0 else f'non-empty, {pos_len} chars'}")
+    print(f"  parsed negative_prompt: {'EMPTY' if neg_len == 0 else f'non-empty, {neg_len} chars'}")
+    print(f"  parsed param keys found: {sorted(parsed['params'].keys())}")
+
+
+def cmd_serve(args):
+    scan_dir = args.dir or dblib.get_last_scanned_dir()
+    if scan_dir:
+        cmd_scan(argparse.Namespace(dir=scan_dir, rescan=False))
+    else:
+        print("hoard: no directory given and nothing scanned yet — pass one: hoard serve <dir>", file=sys.stderr)
+
+    url = f"http://127.0.0.1:{args.port}/?token={serverlib.ACCESS_TOKEN}"
+    if not args.no_browser:
+        Timer(0.7, lambda: webbrowser.open(url)).start()
+    print(f"Serving hoard at {url}")
+    serverlib.run(port=args.port)
+
+
+def main():
+    parser = argparse.ArgumentParser(prog="hoard", description=__doc__)
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    p_scan = sub.add_parser("scan", help="index (or re-index) a directory tree")
+    p_scan.add_argument("dir", help="directory to scan")
+    p_scan.add_argument("--rescan", action="store_true", help="re-parse all files, ignoring cached mtime/size")
+    p_scan.set_defaults(func=cmd_scan)
+
+    p_serve = sub.add_parser("serve", help="start the local web browser/search UI")
+    p_serve.add_argument("dir", nargs="?", help="optionally scan this directory before serving")
+    p_serve.add_argument("--port", type=int, default=8420)
+    p_serve.add_argument("--no-browser", action="store_true", help="don't auto-open a browser tab")
+    p_serve.set_defaults(func=cmd_serve)
+
+    p_inspect = sub.add_parser("inspect", help="show what hoard extracted from one specific file")
+    p_inspect.add_argument("file", help="path to a single image file")
+    p_inspect.add_argument(
+        "--redact", action="store_true",
+        help="structural diagnostics only (chunk types, lengths, booleans) — never prints prompt text",
+    )
+    p_inspect.set_defaults(func=cmd_inspect)
+
+    args = parser.parse_args()
+    args.func(args)
+
+
+if __name__ == "__main__":
+    main()

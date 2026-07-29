@@ -17,6 +17,7 @@ data/
 images/
 tree.json
 corpus.json
+*.db
 *.png
 *.jpg
 *.jpeg

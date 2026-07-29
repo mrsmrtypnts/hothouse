@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "Image Downloader",
+  "version": "1.0.19",
+  "description": "Download images to a custom folder with one click",
+  "permissions": [
+    "nativeMessaging",
+    "storage",
+    "alarms"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "all_frames": true,
+      "js": ["content.js"],
+      "css": ["content.css"]
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Image Downloader"
+  }
+}

@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>hoard</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header>
+  <h1>hoard</h1>
+</header>
+<div id="search-panel">
+  <div class="search-row">
+    <label for="search-prompt">Prompt</label>
+    <input id="search-prompt" type="text" placeholder="foo, bar, baz&hellip;" autocomplete="off" autofocus>
+  </div>
+  <div class="search-row">
+    <label for="search-negative">Negative prompt</label>
+    <input id="search-negative" type="text" placeholder="blurry, watermark&hellip;" autocomplete="off">
+  </div>
+  <div class="search-row">
+    <label for="search-filename">Filename</label>
+    <input id="search-filename" type="text" placeholder="!!, IMG_&hellip;" autocomplete="off">
+  </div>
+  <div class="search-row" id="aspect-row">
+    <label>Aspect ratio</label>
+    <div class="checkbox-group">
+      <label class="checkbox-label"><input type="checkbox" value="portrait"> Portrait</label>
+      <label class="checkbox-label"><input type="checkbox" value="landscape"> Landscape</label>
+      <label class="checkbox-label"><input type="checkbox" value="square"> Square</label>
+      <label class="checkbox-label"><input type="checkbox" value="8x5"> 8x5</label>
+      <label class="checkbox-label"><input type="checkbox" value="2x3"> 2x3</label>
+      <label class="checkbox-label"><input type="checkbox" value="3x2"> 3x2</label>
+      <input id="search-aspect-custom" type="text" placeholder="other, e.g. 21x9&hellip;" autocomplete="off">
+    </div>
+  </div>
+</div>
+<div id="count-bar"></div>
+<div id="layout">
+  <div id="grid-col">
+    <main id="grid"></main>
+    <button id="load-more" class="hidden">Load more</button>
+  </div>
+  <div id="resizer" class="hidden"></div>
+  <aside id="detail-pane" class="hidden">
+    <div id="detail-img-wrap">
+      <img id="detail-img" alt="">
+      <button class="open-overlay" title="Open in default app">&#8599;</button>
+    </div>
+    <div id="meta-filename"></div>
+    <div><strong>Prompt</strong><pre id="meta-positive"></pre></div>
+    <div><strong>Negative prompt</strong><pre id="meta-negative"></pre></div>
+    <div><strong>Params</strong><pre id="meta-params"></pre></div>
+    <div id="meta-path"></div>
+  </aside>
+</div>
+<script src="/app.js"></script>
+</body>
+</html>

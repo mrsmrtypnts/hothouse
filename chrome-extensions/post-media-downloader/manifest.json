@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "Post Media Downloader",
+  "version": "1.5.0",
+  "description": "Download all images and videos from post pages with custom filename prefixes.",
+  "permissions": ["downloads"],
+  "host_permissions": [
+    "https://civitai.red/*",
+    "https://image.civitai.red/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://civitai.red/posts/*"],
+      "js": ["content.js"],
+      "run_at": "document_end"
+    }
+  ]
+}

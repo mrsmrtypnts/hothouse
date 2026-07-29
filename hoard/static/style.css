@@ -1,0 +1,226 @@
+:root { color-scheme: dark; }
+* { box-sizing: border-box; }
+html, body {
+  margin: 0;
+  height: 100%;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #15161a;
+  color: #e6e6e6;
+}
+body {
+  display: flex;
+  flex-direction: column;
+}
+header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.75rem 1rem;
+  background: #1c1e24;
+  border-bottom: 1px solid #2a2d35;
+  flex-shrink: 0;
+}
+header h1 {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #8fb3ff;
+}
+#search-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.6rem 1rem;
+  background: #1c1e24;
+  border-bottom: 1px solid #2a2d35;
+  flex-shrink: 0;
+}
+.search-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+.search-row label {
+  width: 110px;
+  flex-shrink: 0;
+  text-align: right;
+  font-size: 0.8rem;
+  color: #888;
+}
+.search-row input[type="text"] {
+  flex: 1;
+  max-width: 480px;
+  padding: 0.4rem 0.65rem;
+  font-size: 0.9rem;
+  border-radius: 6px;
+  border: 1px solid #3a3d47;
+  background: #0f1013;
+  color: #e6e6e6;
+}
+.checkbox-group {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+  color: #e6e6e6;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.checkbox-label input {
+  cursor: pointer;
+}
+#search-aspect-custom {
+  width: 160px;
+  padding: 0.4rem 0.65rem;
+  font-size: 0.9rem;
+  border-radius: 6px;
+  border: 1px solid #3a3d47;
+  background: #0f1013;
+  color: #e6e6e6;
+}
+#count-bar {
+  flex-shrink: 0;
+  padding: 0.5rem 1rem;
+  color: #888;
+  font-size: 0.85rem;
+  background: #1c1e24;
+  border-bottom: 1px solid #2a2d35;
+}
+#layout {
+  display: flex;
+  align-items: flex-start;
+  flex: 1;
+  min-height: 0;
+}
+#grid-col {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  overflow-y: auto;
+}
+#grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+  gap: 6px;
+  padding: 12px;
+}
+#load-more {
+  display: block;
+  margin: 0 auto 24px;
+  padding: 0.5rem 1.5rem;
+  font-size: 0.9rem;
+  border-radius: 6px;
+  border: 1px solid #3a3d47;
+  background: #1c1e24;
+  color: #e6e6e6;
+  cursor: pointer;
+}
+#load-more:hover { background: #24262d; }
+#load-more.hidden { display: none; }
+.thumb {
+  position: relative;
+  aspect-ratio: 1;
+  overflow: hidden;
+  border-radius: 6px;
+  cursor: pointer;
+  background: #24262d;
+  border: 2px solid transparent;
+}
+.thumb.selected {
+  border-color: #8fb3ff;
+}
+.thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+#resizer {
+  width: 6px;
+  flex-shrink: 0;
+  height: 100%;
+  cursor: col-resize;
+  background: #2a2d35;
+}
+#resizer:hover,
+#resizer:active {
+  background: #8fb3ff;
+}
+#resizer.hidden {
+  display: none;
+}
+#detail-pane {
+  flex-shrink: 0;
+  height: 100%;
+  overflow-y: auto;
+  background: #1c1e24;
+  padding: 1rem;
+  font-size: 0.85rem;
+}
+#detail-pane.hidden {
+  display: none;
+}
+#detail-img-wrap {
+  position: relative;
+  margin-bottom: 1rem;
+}
+#detail-img {
+  display: block;
+  width: 100%;
+  max-height: 65vh;
+  object-fit: contain;
+  border-radius: 6px;
+  background: #000;
+}
+.open-overlay {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 36px;
+  height: 36px;
+  border-radius: 6px;
+  border: none;
+  background: rgba(0, 0, 0, 0.65);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+  color: #fff;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.1s ease, background 0.1s ease;
+}
+.thumb:hover .open-overlay,
+#detail-img-wrap:hover .open-overlay {
+  opacity: 1;
+}
+.open-overlay:hover {
+  background: rgba(0, 0, 0, 0.88);
+}
+#detail-pane pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: #0f1013;
+  padding: 0.5rem;
+  border-radius: 4px;
+  margin: 0.3rem 0 1rem;
+}
+#meta-filename {
+  font-size: 0.95rem;
+  font-weight: 600;
+  margin-bottom: 1rem;
+  word-break: break-all;
+}
+#meta-path {
+  font-size: 0.75rem;
+  color: #888;
+  word-break: break-all;
+}
