@@ -8,6 +8,7 @@ const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body || {}),
     }).then((r) => r.json()),
+  del: (path) => fetch(path, { method: "DELETE" }).then((r) => r.json()),
 };
 
 // duplicated from mutate.py's SAMPLERS -- breeder has no /api/samplers endpoint,
@@ -38,7 +39,7 @@ function navigate(id) {
   history.pushState({}, "", url);
   render();
 }
-window.addEventListener("popstate", render);
+window.addEventListener("popstate", () => render());
 
 let pollTimer = null;
 function stopPolling() {
@@ -106,10 +107,62 @@ function setDenoise(v) {
   sessionStorage.setItem("denoisingStrength", String(v));
 }
 
+let hoverEl = null;
+
+function hideHoverPreview() {
+  if (hoverEl) {
+    hoverEl.remove();
+    hoverEl = null;
+  }
+}
+
+function positionHoverPanel(panel, anchorEl) {
+  const rect = anchorEl.getBoundingClientRect();
+  const panelRect = panel.getBoundingClientRect();
+  let left = rect.right + 12;
+  if (left + panelRect.width > window.innerWidth - 8) {
+    left = rect.left - panelRect.width - 12;
+  }
+  left = Math.max(8, Math.min(left, window.innerWidth - panelRect.width - 8));
+  let top = rect.top;
+  top = Math.max(8, Math.min(top, window.innerHeight - panelRect.height - 8));
+  panel.style.left = `${left}px`;
+  panel.style.top = `${top}px`;
+}
+
+function showHoverPreview(node, anchorEl) {
+  hideHoverPreview();
+  const panel = el("div", { class: "hover-preview" });
+  const img = el("img", { src: `/images/${node.image_file}`, alt: node.spec.prompt || node.id });
+  panel.appendChild(img);
+  document.body.appendChild(panel);
+  hoverEl = panel;
+
+  positionHoverPanel(panel, anchorEl);
+  img.addEventListener("load", () => {
+    if (hoverEl === panel) positionHoverPanel(panel, anchorEl);
+  });
+}
+
 function thumbCard(node, selected) {
   const card = el("div", { class: `thumb-card${selected ? " selected" : ""}` });
+
+  if (node.status !== "pending") {
+    const delBtn = el("button", { class: "delete-x", text: "×" });
+    delBtn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      if (!confirm("forget this generation?")) return;
+      await api.del(`/api/nodes/${node.id}`);
+      render();
+    });
+    card.appendChild(delBtn);
+  }
+
   if (node.status === "done") {
-    card.appendChild(el("img", { src: `/images/${node.image_file}`, alt: node.spec.prompt || node.id }));
+    const img = el("img", { src: `/images/${node.image_file}`, alt: node.spec.prompt || node.id });
+    img.addEventListener("mouseenter", () => showHoverPreview(node, img));
+    img.addEventListener("mouseleave", hideHoverPreview);
+    card.appendChild(img);
   } else if (node.status === "error") {
     card.appendChild(el("div", { class: "thumb-status thumb-error", text: "failed" }));
   } else {
@@ -163,6 +216,27 @@ function numField(form, label, key, opts = {}) {
   });
   form.appendChild(fieldRow(label, input));
   return input;
+}
+
+function buildSeedField(form) {
+  const input = el("input", { type: "number", step: "1" });
+  input.value = formSpec.seed ?? "";
+  input.addEventListener("input", () => {
+    const v = parseFloat(input.value);
+    formSpec.seed = isNaN(v) ? formSpec.seed : v;
+  });
+
+  const resetBtn = el("button", { type: "button", class: "seed-reset", text: "↺" });
+  resetBtn.title = "reset to -1 (randomize each generation)";
+  resetBtn.addEventListener("click", () => {
+    input.value = "-1";
+    formSpec.seed = -1;
+  });
+
+  const row = el("div", { class: "seed-row" });
+  row.appendChild(input);
+  row.appendChild(resetBtn);
+  form.appendChild(fieldRow("Seed", row));
 }
 
 function buildSizeField(form) {
@@ -240,7 +314,7 @@ function buildForm(spec, knownModels) {
   formSpec = { ...spec };
   const form = el("div", { class: "detail-form" });
 
-  const promptInput = el("textarea", { class: "field-prompt" });
+  const promptInput = el("textarea", { class: "field-prompt field-prompt-main" });
   promptInput.value = formSpec.prompt || "";
   promptInput.addEventListener("input", () => { formSpec.prompt = promptInput.value; });
   form.appendChild(fieldRow("Prompt", promptInput));
@@ -266,7 +340,7 @@ function buildForm(spec, knownModels) {
   form.appendChild(numRow);
   numField(numRow, "Steps", "steps", { min: "1", max: "150" });
   numField(numRow, "CFG scale", "cfg_scale", { min: "1", max: "30", step: "0.5" });
-  numField(numRow, "Seed", "seed", { step: "1" });
+  buildSeedField(numRow);
   numField(numRow, "Clip skip", "clip_skip", { min: "1", max: "12" });
 
   return form;
@@ -443,7 +517,21 @@ async function buildDetailPanel(focusId, knownModels) {
   return panel;
 }
 
-async function render() {
+function isEditingDetailPanel() {
+  const active = document.activeElement;
+  return !!(active && active.closest && active.closest(".detail-panel"));
+}
+
+async function render(isPoll = false) {
+  if (isPoll && isEditingDetailPanel()) {
+    // a poll tick fired while the user has an active edit in the form --
+    // rebuilding the DOM now would yank focus out from under them (this is
+    // what made the prompt box "keep losing focus" while anything was
+    // pending). Just check back again shortly instead of rendering now.
+    pollTimer = setTimeout(() => render(true), 1500);
+    return;
+  }
+
   stopPolling();
   const [allNodes, knownModels] = await Promise.all([
     api.get("/api/nodes"),
@@ -463,7 +551,7 @@ async function render() {
   root.replaceChildren(wrap);
 
   if (allNodes.some((n) => n.status === "pending")) {
-    pollTimer = setTimeout(render, 1500);
+    pollTimer = setTimeout(() => render(true), 1500);
   }
 }
 
