@@ -61,10 +61,17 @@ function setBrowserWidth(px) {
   sessionStorage.setItem("breederV2BrowserWidth", String(px));
 }
 
+// true while a splitter drag is active -- render() must not tear down the DOM
+// mid-drag (see buildSplitter): that would detach the panel/splitter the drag
+// is holding onto while document-level mousemove/mouseup listeners stay bound
+// to now-orphaned elements, producing exactly the "weird things" that follow
+let isDraggingSplitter = false;
+
 function buildSplitter(browserPanel) {
   const splitter = el("div", { class: "splitter" });
   splitter.addEventListener("mousedown", (e) => {
     e.preventDefault();
+    isDraggingSplitter = true;
     const startX = e.clientX;
     const startWidth = browserPanel.getBoundingClientRect().width;
     splitter.classList.add("dragging");
@@ -77,6 +84,7 @@ function buildSplitter(browserPanel) {
       browserPanel.style.width = `${next}px`;
     }
     function onUp() {
+      isDraggingSplitter = false;
       splitter.classList.remove("dragging");
       setBrowserWidth(browserPanel.getBoundingClientRect().width);
       document.removeEventListener("mousemove", onMove);
@@ -135,6 +143,9 @@ function showHoverPreview(node, anchorEl) {
   const panel = el("div", { class: "hover-preview" });
   const img = el("img", { src: `/images/${node.image_file}`, alt: node.spec.prompt || node.id });
   panel.appendChild(img);
+  if (node.label) {
+    panel.appendChild(el("div", { class: "hover-caption", text: node.label }));
+  }
   document.body.appendChild(panel);
   hoverEl = panel;
 
@@ -335,12 +346,12 @@ function buildForm(spec, knownModels) {
   form.appendChild(fieldRow("Sampler", samplerInput));
 
   buildSizeField(form);
+  buildSeedField(form);
 
   const numRow = el("div", { class: "field-grid" });
   form.appendChild(numRow);
   numField(numRow, "Steps", "steps", { min: "1", max: "150" });
   numField(numRow, "CFG scale", "cfg_scale", { min: "1", max: "30", step: "0.5" });
-  buildSeedField(numRow);
   numField(numRow, "Clip skip", "clip_skip", { min: "1", max: "12" });
 
   return form;
@@ -471,6 +482,16 @@ function newRootLink() {
   return link;
 }
 
+function wireCmdEnterToBreed(panel) {
+  panel.addEventListener("keydown", (e) => {
+    if (!(e.metaKey || e.ctrlKey) || e.key !== "Enter") return;
+    if (!e.target.classList.contains("field-prompt")) return;
+    e.preventDefault();
+    const btn = panel.querySelector(".btn-breed");
+    if (btn && !btn.disabled) btn.click();
+  });
+}
+
 async function buildDetailPanel(focusId, knownModels) {
   const panel = el("div", { class: "detail-panel" });
 
@@ -484,6 +505,7 @@ async function buildDetailPanel(focusId, knownModels) {
     main.appendChild(buildForm(seedSpec, knownModels));
     panel.appendChild(main);
     panel.appendChild(buildFreshBreedControls());
+    wireCmdEnterToBreed(panel);
     return panel;
   }
 
@@ -513,6 +535,7 @@ async function buildDetailPanel(focusId, knownModels) {
   panel.appendChild(main);
 
   panel.appendChild(buildBreedControls(node));
+  wireCmdEnterToBreed(panel);
 
   return panel;
 }
@@ -523,6 +546,12 @@ function isEditingDetailPanel() {
 }
 
 async function render(isPoll = false) {
+  if (isDraggingSplitter) {
+    // never rebuild mid-drag, regardless of why render() was called -- retry
+    // shortly rather than on the full poll cadence, since drags are brief
+    setTimeout(() => render(isPoll), 100);
+    return;
+  }
   if (isPoll && isEditingDetailPanel()) {
     // a poll tick fired while the user has an active edit in the form --
     // rebuilding the DOM now would yank focus out from under them (this is

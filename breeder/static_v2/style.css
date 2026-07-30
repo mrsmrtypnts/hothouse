@@ -150,15 +150,15 @@ button:disabled { opacity: 0.5; cursor: default; }
   flex-wrap: wrap;
 }
 .detail-image img {
-  max-width: 480px;
-  max-height: 480px;
+  max-width: 720px;
+  max-height: 720px;
   border-radius: var(--radius);
   border: 1px solid var(--border);
   display: block;
 }
 .placeholder {
-  width: 420px;
-  height: 420px;
+  width: 720px;
+  height: 720px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -187,13 +187,15 @@ button:disabled { opacity: 0.5; cursor: default; }
 }
 .field-grid input { width: 100%; }
 
-.seed-row { display: flex; gap: 4px; }
-.seed-row input { width: 100%; min-width: 0; }
+.seed-row { display: flex; gap: 4px; max-width: 220px; }
+.seed-row input { width: 100%; min-width: 0; -moz-appearance: textfield; }
+.seed-row input::-webkit-outer-spin-button,
+.seed-row input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 .seed-reset { flex-shrink: 0; padding: 0 8px; }
 
 .breed-controls {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   gap: 12px;
   flex-wrap: wrap;
   padding-top: 16px;
@@ -242,4 +244,10 @@ button:disabled { opacity: 0.5; cursor: default; }
   max-height: min(480px, 80vh);
   object-fit: contain;
   border-radius: var(--radius-sm);
+}
+.hover-caption {
+  margin-top: 8px;
+  font-size: 15px;
+  color: var(--text-dim);
+  max-width: min(480px, 90vw);
 }
