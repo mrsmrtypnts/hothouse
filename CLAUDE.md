@@ -24,6 +24,10 @@ If a different account is active, switch first (`gh auth switch --hostname githu
 
 Re-verify both of the above every time, on every machine — never assume they're already correct.
 
+# Chrome extension versioning
+
+Any time you change a file inside a Chrome extension directory (e.g. `chrome-extensions/chrome-image-downloader/`, `chrome-extensions/post-media-downloader/`), bump the `version` field in that extension's `manifest.json` as part of the same change. This applies to any change, not just user-facing ones — it's how reloading the unpacked extension is confirmed to have picked up the new code.
+
 # Before pushing
 
 Always confirm with the user before running `git push`, even immediately after a commit they already asked for. Committing does not imply push approval.
