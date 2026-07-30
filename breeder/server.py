@@ -2,7 +2,9 @@ import asyncio
 import base64
 import io
 import secrets
+import threading
 import uuid
+import webbrowser
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -42,7 +44,9 @@ async def _require_token(request: Request, call_next):
 
 @app.on_event("startup")
 async def _print_access_url() -> None:
-    print(f"breeder: http://127.0.0.1:{config.PORT}/?token={ACCESS_TOKEN}")
+    url = f"http://127.0.0.1:{config.PORT}/?token={ACCESS_TOKEN}"
+    print(f"breeder: {url}")
+    threading.Timer(0.5, lambda: webbrowser.open(url)).start()
 
 DEFAULTS = {
     "negative_prompt": "",

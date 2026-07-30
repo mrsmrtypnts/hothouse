@@ -2,7 +2,10 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-VENV_DIR=".venv"
+# Outside the repo, under the account's home dir and chmod 700 -- same reasoning
+# as breeder's data dir and access token: keep this isolated from other locally
+# logged-in accounts on the same Mac, regardless of where the repo itself lives.
+VENV_DIR="$HOME/.local/share/breeder/venv"
 HASH_FILE="$VENV_DIR/.requirements.sha256"
 
 requirements_hash() {
@@ -17,8 +20,9 @@ venv_is_current() {
 
 if ! venv_is_current; then
     echo "breeder: setting up its Python environment (first run only)..." >&2
-    python3 -m venv "$VENV_DIR"
-    "$VENV_DIR/bin/pip" install --quiet --upgrade pip
+    mkdir -p "$(dirname "$VENV_DIR")"
+    python3 -m venv --upgrade-deps "$VENV_DIR"
+    chmod 700 "$VENV_DIR"
     "$VENV_DIR/bin/pip" install --quiet -r requirements.txt
     requirements_hash > "$HASH_FILE"
 fi
