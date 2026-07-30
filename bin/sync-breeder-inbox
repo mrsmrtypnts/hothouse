@@ -1,0 +1,30 @@
+#!/bin/bash
+# sync-breeder-inbox -- commit and push local edits to breeder/INBOX.md.
+#
+# Usage: sync-breeder-inbox [message]
+# If message is omitted, a generic commit message is used.
+set -euo pipefail
+
+repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$repo"
+
+# Every commit to this repo must carry this identity, regardless of which
+# machine or account runs this script -- see CLAUDE.md.
+git config user.name "mrsmrtypnts"
+git config user.email "310750161+mrsmrtypnts@users.noreply.github.com"
+
+git add breeder/INBOX.md
+
+if git diff --cached --quiet -- breeder/INBOX.md; then
+    echo "sync-breeder-inbox: no INBOX.md changes to commit" >&2
+    exit 0
+fi
+
+msg="${*:-INBOX update}"
+git commit -m "INBOX: $msg"
+
+if ! git push; then
+    echo "sync-breeder-inbox: push rejected (remote has new commits) -- pulling and retrying" >&2
+    git pull --no-edit
+    git push
+fi
