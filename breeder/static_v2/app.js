@@ -177,12 +177,14 @@ function positionHoverPanel(panel, anchorEl) {
   panel.style.top = `${top}px`;
 }
 
-function showHoverPreview(node, anchorEl) {
+function showHoverPreview(node, anchorEl, caption) {
   hideHoverPreview();
   const panel = el("div", { class: "hover-preview" });
-  let img = null;
-  if (node.status === "done") {
-    img = el("img", { src: `/images/${node.image_file}`, alt: node.spec.prompt || node.id });
+  if (node.status === "done" && node.image_file) {
+    const img = el("img", { src: `/images/${node.image_file}`, alt: node.spec.prompt || node.id });
+    img.addEventListener("load", () => {
+      if (hoverEl === panel) positionHoverPanel(panel, anchorEl);
+    });
     panel.appendChild(img);
   } else if (node.status === "error") {
     panel.appendChild(el("div", {
@@ -190,18 +192,14 @@ function showHoverPreview(node, anchorEl) {
       text: node.error || "(no error message)",
     }));
   }
-  if (node.label) {
-    panel.appendChild(el("div", { class: "hover-caption", text: node.label }));
+  const text = caption ?? node.label;
+  if (text) {
+    panel.appendChild(el("div", { class: "hover-caption", text }));
   }
   document.body.appendChild(panel);
   hoverEl = panel;
 
   positionHoverPanel(panel, anchorEl);
-  if (img) {
-    img.addEventListener("load", () => {
-      if (hoverEl === panel) positionHoverPanel(panel, anchorEl);
-    });
-  }
 }
 
 function thumbCard(node, selected) {
@@ -257,15 +255,17 @@ function buildBrowserPanel(allNodes, focusId) {
 function breadcrumbs(ancestors) {
   const bar = el("div", { class: "crumbs" });
   for (const a of ancestors) {
+    const caption = a.label || "original";
+    let crumbEl;
     if (a.status === "done") {
-      const img = el("img", { class: "crumb-thumb", src: `/images/${a.image_file}`, alt: a.label || a.id });
-      img.addEventListener("click", () => navigate(a.id));
-      bar.appendChild(img);
+      crumbEl = el("img", { class: "crumb-thumb", src: `/images/${a.image_file}`, alt: caption });
     } else {
-      const span = el("span", { class: "crumb-pending", text: a.status === "error" ? "✗" : "…" });
-      span.addEventListener("click", () => navigate(a.id));
-      bar.appendChild(span);
+      crumbEl = el("span", { class: "crumb-pending", text: a.status === "error" ? "✗" : "…" });
     }
+    crumbEl.addEventListener("click", () => navigate(a.id));
+    crumbEl.addEventListener("mouseenter", () => showHoverPreview(a, crumbEl, caption));
+    crumbEl.addEventListener("mouseleave", hideHoverPreview);
+    bar.appendChild(crumbEl);
     bar.appendChild(el("span", { class: "crumb-sep", text: "›" }));
   }
   return bar;

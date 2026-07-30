@@ -304,4 +304,5 @@ button:disabled { opacity: 0.5; cursor: default; }
   font-size: 15px;
   color: var(--text-dim);
   max-width: min(480px, 90vw);
+  white-space: pre-wrap;
 }
