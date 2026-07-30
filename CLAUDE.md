@@ -31,3 +31,23 @@ Any time you change a file inside a Chrome extension directory (e.g. `chrome-ext
 # Before pushing
 
 Always confirm with the user before running `git push`, even immediately after a commit they already asked for. Committing does not imply push approval.
+
+# Testing breeder locally
+
+Never test against the user's real running instance, its real data dir, or its real Diffus API key. Spin up a throwaway instance instead:
+
+```bash
+HOME=<scratch dir> BREEDER_PORT=<free port> BREEDER_API_KEY=dummy-test-key BREEDER_NO_BROWSER_OPEN=1 ./breeder/run.sh
+```
+
+`BREEDER_NO_BROWSER_OPEN` is not optional — without it, the instance opens a real tab in the user's actual browser (`server.py`'s startup hook calls `webbrowser.open()` unconditionally otherwise).
+
+Only changes to `breeder/*.py` (`server.py`, `config.py`, `store.py`, `mutate.py`, `corpus.py`) require restarting the server process to take effect. Changes under `breeder/static/` or `breeder/static_v2/` only need a browser refresh — don't restart the user's real server for those, it interrupts anything currently generating.
+
+# Studio's render() gotcha
+
+`breeder/static_v2/app.js`'s `render()` does a full `root.replaceChildren()` DOM rebuild, including on every poll tick while any node is pending. This has already caused two real bugs from the same root cause: the prompt textarea losing focus while the user was actively typing, and a panel-splitter drag breaking mid-gesture when a poll tick fired during it. Guards now exist for both (`isEditingDetailPanel()`, `isDraggingSplitter`) inside `render()`. Any new interactive gesture added to Studio (dragging, in-place editing, anything stateful that isn't just "click and navigate") should be checked against this same failure mode before it ships.
+
+# Concurrent sessions may be working on this repo
+
+More than one Claude session (different machines, different tasks) may have this repo open at once. `git commit` stages the entire index, not just what you just `git add`-ed — always run `git diff --cached --stat` immediately before committing to confirm only your own intended files are staged. Another session's unrelated staged changes can otherwise get swept into your commit unnoticed.
