@@ -352,10 +352,10 @@ function buildBreedControls(node) {
 
 function buildCreateControls() {
   const box = el("div", { class: "breed-controls" });
-  const createBtn = el("button", { class: "btn-breed", text: "Create" });
+  const createBtn = el("button", { class: "btn-breed", text: "Breed" });
   createBtn.addEventListener("click", async () => {
     createBtn.disabled = true;
-    createBtn.textContent = "Creating...";
+    createBtn.textContent = "Breeding...";
     const { prompt, ...overrides } = formSpec;
     const node = await api.post("/api/root", { prompt, overrides });
     navigate(node.id);
