@@ -80,7 +80,7 @@ DEFAULTS = {
     "n_iter": 1,
 }
 
-PONY_PROMPT_PREFIX = "score_9, score_8_up, score_7_up, score_6_up, score_5_up, score_4_up"
+PONY_PROMPT_PREFIX = "score_9, score_8_up, score_7_up, score_6_up"
 
 DEFAULT_DENOISING_STRENGTH = 0.75
 
