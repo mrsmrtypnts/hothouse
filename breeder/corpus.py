@@ -1,6 +1,7 @@
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Optional
 
 from PIL import Image
 
@@ -32,7 +33,7 @@ def _save() -> None:
 _load()
 
 
-def _tally_field(text: str, keyword_bucket: dict, lora_bucket: dict | None) -> None:
+def _tally_field(text: str, keyword_bucket: dict, lora_bucket: Optional[dict]) -> None:
     for seg in text.split(","):
         seg = seg.strip()
         if not seg:

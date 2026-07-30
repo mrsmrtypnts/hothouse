@@ -1,11 +1,14 @@
 import asyncio
 import base64
 import io
+import secrets
 import uuid
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi.responses import PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image, PngImagePlugin
 from pydantic import BaseModel
@@ -17,7 +20,29 @@ import extract
 import mutate
 import store
 
+# Loopback sockets on macOS are shared across every locally logged-in account,
+# not just this one -- Fast User Switching or `su` lets another account reach
+# this port with nothing more than a guess. ACCESS_TOKEN closes that gap: pass
+# it once via ?token=, and a cookie carries it for the rest of the session.
+ACCESS_TOKEN = secrets.token_hex(24)
+TOKEN_COOKIE = "breeder_token"
+
 app = FastAPI()
+
+
+@app.middleware("http")
+async def _require_token(request: Request, call_next):
+    token = request.query_params.get("token") or request.cookies.get(TOKEN_COOKIE)
+    if token != ACCESS_TOKEN:
+        return PlainTextResponse("Forbidden", status_code=403)
+    response = await call_next(request)
+    response.set_cookie(TOKEN_COOKIE, ACCESS_TOKEN, httponly=True, samesite="lax")
+    return response
+
+
+@app.on_event("startup")
+async def _print_access_url() -> None:
+    print(f"breeder: http://127.0.0.1:{config.PORT}/?token={ACCESS_TOKEN}")
 
 DEFAULTS = {
     "negative_prompt": "",
@@ -45,7 +70,7 @@ class RootRequest(BaseModel):
 class VariationsRequest(BaseModel):
     count: int = 6
     mode: str = "txt2img"
-    denoising_strength: float | None = None
+    denoising_strength: Optional[float] = None
 
 
 class CorpusScanRequest(BaseModel):
@@ -101,10 +126,10 @@ def _crop_and_resize(image_bytes: bytes, target_w: int, target_h: int) -> bytes:
 async def _render_node(
     node_id: str,
     spec: dict,
-    parent_id: str | None = None,
-    label: str | None = None,
+    parent_id: Optional[str] = None,
+    label: Optional[str] = None,
     render_mode: str = "txt2img",
-    init_image_bytes: bytes | None = None,
+    init_image_bytes: Optional[bytes] = None,
 ) -> None:
     try:
         async with _render_semaphore:

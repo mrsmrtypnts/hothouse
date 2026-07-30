@@ -2,6 +2,7 @@ import asyncio
 import json
 import uuid
 from datetime import datetime, timezone
+from typing import Optional
 
 import config
 
@@ -64,9 +65,9 @@ _load()
 
 async def create_node(
     spec: dict,
-    parent_id: str | None,
-    label: str | None = None,
-    batch_id: str | None = None,
+    parent_id: Optional[str],
+    label: Optional[str] = None,
+    batch_id: Optional[str] = None,
     render_mode: str = "txt2img",
 ) -> dict:
     node = {
@@ -146,7 +147,7 @@ async def delete_subtree(node_id: str) -> list[dict]:
         return removed
 
 
-def get(node_id: str) -> dict | None:
+def get(node_id: str) -> Optional[dict]:
     return _nodes.get(node_id)
 
 
