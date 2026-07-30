@@ -15,6 +15,7 @@ _EMPTY = {
     "file_count": 0,
     "keywords": {"prompt": {}, "negative_prompt": {}},
     "loras": {},
+    "models": {},
 }
 
 _state = dict(_EMPTY)
@@ -23,7 +24,9 @@ _state = dict(_EMPTY)
 def _load() -> None:
     global _state
     if config.CORPUS_PATH.exists():
-        _state = json.loads(config.CORPUS_PATH.read_text())
+        # merge onto _EMPTY so a corpus.json saved before a new bucket was
+        # introduced (e.g. "models") doesn't KeyError on the missing key
+        _state = {**_EMPTY, **json.loads(config.CORPUS_PATH.read_text())}
 
 
 def _save() -> None:
@@ -49,9 +52,19 @@ def _tally_field(text: str, keyword_bucket: dict, lora_bucket: Optional[dict]) -
         entry["weight_sum"] += weight
 
 
+def _tally_model(model_name: str, model_hash: str, bucket: dict) -> None:
+    name = model_name.strip()
+    if not name:
+        return
+    key = f"{name}|{model_hash.strip()}"
+    entry = bucket.setdefault(key, {"count": 0})
+    entry["count"] += 1
+
+
 def scan(paths: list[str]) -> dict:
     keywords = {"prompt": {}, "negative_prompt": {}}
     loras = {}
+    models = {}
     file_count = 0
     for p in paths:
         root = Path(p).expanduser()
@@ -69,6 +82,7 @@ def scan(paths: list[str]) -> dict:
             file_count += 1
             _tally_field(spec.get("prompt", ""), keywords["prompt"], loras)
             _tally_field(spec.get("negative_prompt", ""), keywords["negative_prompt"], None)
+            _tally_model(spec.get("model_name", ""), spec.get("model_hash", ""), models)
 
     global _state
     _state = {
@@ -77,6 +91,7 @@ def scan(paths: list[str]) -> dict:
         "file_count": file_count,
         "keywords": keywords,
         "loras": loras,
+        "models": models,
     }
     _save()
     return summary()
@@ -97,6 +112,15 @@ def top_loras(exclude: set[str]) -> list[tuple[str, int, float]]:
         for name, e in _state["loras"].items()
         if name not in exclude
     ]
+
+
+def top_models() -> list[tuple[str, str, int]]:
+    rows = []
+    for key, e in _state["models"].items():
+        name, _, model_hash = key.partition("|")
+        rows.append((name, model_hash, e["count"]))
+    rows.sort(key=lambda r: -r[2])
+    return rows
 
 
 def summary(limit: int = 25) -> dict:

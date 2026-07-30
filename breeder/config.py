@@ -10,6 +10,7 @@ API_KEY = os.environ.get("BREEDER_API_KEY", "")
 DEFAULT_MODEL_NAME = os.environ.get("BREEDER_MODEL_NAME", "")
 DEFAULT_MODEL_HASH = os.environ.get("BREEDER_MODEL_HASH", "")
 PORT = int(os.environ.get("BREEDER_PORT", "8731"))
+CORPUS_DIRS = [p.strip() for p in os.environ.get("BREEDER_CORPUS_DIRS", "").split(",") if p.strip()]
 
 # ~/.local/share, not /tmp -- on macOS the system tempdir isn't scoped to this
 # account, so generated images and prompts would otherwise be exposed to

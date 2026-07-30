@@ -175,5 +175,21 @@ def roots() -> list[dict]:
     )
 
 
+def distinct_models() -> list[tuple[str, str, int]]:
+    counts: dict[str, int] = {}
+    for n in _nodes.values():
+        name = (n["spec"].get("model_name") or "").strip()
+        if not name:
+            continue
+        key = f"{name}|{(n['spec'].get('model_hash') or '').strip()}"
+        counts[key] = counts.get(key, 0) + 1
+    rows = []
+    for key, count in counts.items():
+        name, _, model_hash = key.partition("|")
+        rows.append((name, model_hash, count))
+    rows.sort(key=lambda r: -r[2])
+    return rows
+
+
 def all_nodes() -> list[dict]:
     return sorted(_nodes.values(), key=lambda n: n["created_at"], reverse=True)

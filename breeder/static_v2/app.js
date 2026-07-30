@@ -75,9 +75,79 @@ function thumbCard(node, selected) {
   return card;
 }
 
-function buildBrowserPanel(allNodes, focusId) {
+function buildNewRootPanel(knownModels, forceOpen) {
+  const wrap = el("div", { class: "new-root-panel" });
+  const toggleBtn = el("button", { class: "new-root-toggle", text: "+ New" });
+  const formBox = el("div", { class: "new-root-form" });
+  formBox.style.display = forceOpen ? "" : "none";
+
+  const promptInput = el("textarea", { class: "field-prompt", placeholder: "prompt" });
+
+  const select = el("select");
+  select.appendChild(el("option", { value: "", text: "(use default)" }));
+  for (const m of knownModels) {
+    const key = `${m.model_name}|${m.model_hash}`;
+    const label = m.model_hash ? `${m.model_name} [${m.model_hash}]` : m.model_name;
+    select.appendChild(el("option", { value: key, text: label }));
+  }
+  select.appendChild(el("option", { value: "__custom__", text: "custom..." }));
+
+  const customInput = el("input", { type: "text", placeholder: "model name" });
+  customInput.style.display = "none";
+  select.addEventListener("change", () => {
+    customInput.style.display = select.value === "__custom__" ? "" : "none";
+    if (select.value === "__custom__") customInput.focus();
+  });
+
+  const createBtn = el("button", { class: "btn-breed", text: "Create" });
+  createBtn.addEventListener("click", async () => {
+    const prompt = promptInput.value.trim();
+    if (!prompt) {
+      alert("enter a prompt first");
+      return;
+    }
+    createBtn.disabled = true;
+    createBtn.textContent = "Creating...";
+    const overrides = {};
+    if (select.value === "__custom__") {
+      if (customInput.value.trim()) overrides.model_name = customInput.value.trim();
+    } else if (select.value !== "") {
+      const [name, modelHash] = select.value.split("|");
+      overrides.model_name = name;
+      overrides.model_hash = modelHash;
+    }
+    const node = await api.post("/api/root", { prompt, overrides });
+    navigate(node.id);
+  });
+
+  const cancelBtn = el("button", { text: "Cancel" });
+  cancelBtn.addEventListener("click", () => {
+    formBox.style.display = "none";
+  });
+
+  formBox.appendChild(promptInput);
+  formBox.appendChild(fieldRow("Model", select));
+  formBox.appendChild(customInput);
+  const btnRow = el("div", { class: "new-root-buttons" });
+  btnRow.appendChild(createBtn);
+  btnRow.appendChild(cancelBtn);
+  formBox.appendChild(btnRow);
+
+  toggleBtn.addEventListener("click", () => {
+    formBox.style.display = formBox.style.display === "none" ? "" : "none";
+  });
+
+  wrap.appendChild(toggleBtn);
+  wrap.appendChild(formBox);
+  return wrap;
+}
+
+function buildBrowserPanel(allNodes, focusId, knownModels) {
   const panel = el("div", { class: "browser-panel" });
-  panel.appendChild(el("h2", { text: "Breeder Studio" }));
+  const header = el("div", { class: "browser-header" });
+  header.appendChild(el("h2", { text: "Breeder Studio" }));
+  panel.appendChild(header);
+  panel.appendChild(buildNewRootPanel(knownModels, allNodes.length === 0));
   const grid = el("div", { class: "thumb-grid" });
   for (const node of allNodes) {
     grid.appendChild(thumbCard(node, node.id === focusId));
@@ -121,7 +191,56 @@ function numField(form, label, key, opts = {}) {
   return input;
 }
 
-function buildForm(spec) {
+function buildModelField(form, models) {
+  const currentName = formSpec.model_name || "";
+  const currentHash = formSpec.model_hash || "";
+  const currentKey = `${currentName}|${currentHash}`;
+
+  const select = el("select");
+  const seen = new Set();
+  for (const m of models) {
+    const key = `${m.model_name}|${m.model_hash}`;
+    seen.add(key);
+    const label = m.model_hash ? `${m.model_name} [${m.model_hash}]` : m.model_name;
+    select.appendChild(el("option", { value: key, text: label }));
+  }
+  if (currentName && !seen.has(currentKey)) {
+    const label = currentHash ? `${currentName} [${currentHash}]` : currentName;
+    select.appendChild(el("option", { value: currentKey, text: label }));
+  }
+  select.appendChild(el("option", { value: "__custom__", text: "custom..." }));
+  select.value = currentName ? currentKey : "__custom__";
+
+  const customInput = el("input", { type: "text", placeholder: "model name" });
+  customInput.value = currentName;
+  customInput.style.display = select.value === "__custom__" ? "" : "none";
+
+  select.addEventListener("change", () => {
+    if (select.value === "__custom__") {
+      customInput.style.display = "";
+      customInput.focus();
+      formSpec.model_name = customInput.value;
+      formSpec.model_hash = "";
+    } else {
+      customInput.style.display = "none";
+      const [name, modelHash] = select.value.split("|");
+      formSpec.model_name = name;
+      formSpec.model_hash = modelHash;
+    }
+  });
+  customInput.addEventListener("input", () => {
+    formSpec.model_name = customInput.value;
+    formSpec.model_hash = "";
+  });
+
+  const wrap = el("div", { class: "field-row" });
+  wrap.appendChild(el("span", { class: "field-label", text: "Model" }));
+  wrap.appendChild(select);
+  wrap.appendChild(customInput);
+  form.appendChild(wrap);
+}
+
+function buildForm(spec, knownModels) {
   formSpec = { ...spec };
   const form = el("div", { class: "detail-form" });
 
@@ -135,10 +254,7 @@ function buildForm(spec) {
   negInput.addEventListener("input", () => { formSpec.negative_prompt = negInput.value; });
   form.appendChild(fieldRow("Negative prompt", negInput));
 
-  const modelInput = el("input", { type: "text" });
-  modelInput.value = formSpec.model_name || "";
-  modelInput.addEventListener("input", () => { formSpec.model_name = modelInput.value; });
-  form.appendChild(fieldRow("Model", modelInput));
+  buildModelField(form, knownModels);
 
   const samplerInput = el("input", { type: "text", list: "sampler-options" });
   samplerInput.value = formSpec.sampler_name || "";
@@ -237,12 +353,12 @@ function buildBreedControls(node) {
   return box;
 }
 
-async function buildDetailPanel(focusId) {
+async function buildDetailPanel(focusId, knownModels) {
   const panel = el("div", { class: "detail-panel" });
   if (!focusId) {
     panel.appendChild(el("div", {
       class: "empty-state",
-      text: "No generations yet -- create a root image in the classic UI, then come back here to browse and breed.",
+      text: "No generations yet -- use + New on the left to start from a prompt, or import an image via the classic UI.",
     }));
     return panel;
   }
@@ -267,7 +383,7 @@ async function buildDetailPanel(focusId) {
 
   const rebuildForm = focusId !== formFocusId;
   if (rebuildForm) formFocusId = focusId;
-  main.appendChild(buildForm(rebuildForm ? node.spec : formSpec));
+  main.appendChild(buildForm(rebuildForm ? node.spec : formSpec, knownModels));
   panel.appendChild(main);
 
   panel.appendChild(buildBreedControls(node));
@@ -277,15 +393,18 @@ async function buildDetailPanel(focusId) {
 
 async function render() {
   stopPolling();
-  const allNodes = await api.get("/api/nodes");
+  const [allNodes, knownModels] = await Promise.all([
+    api.get("/api/nodes"),
+    api.get("/api/models"),
+  ]);
   let focusId = currentNodeId();
   if (!focusId || !allNodes.some((n) => n.id === focusId)) {
     focusId = allNodes.length ? allNodes[0].id : null;
   }
 
   const wrap = el("div", { class: "studio" });
-  wrap.appendChild(buildBrowserPanel(allNodes, focusId));
-  wrap.appendChild(await buildDetailPanel(focusId));
+  wrap.appendChild(buildBrowserPanel(allNodes, focusId, knownModels));
+  wrap.appendChild(await buildDetailPanel(focusId, knownModels));
   root.replaceChildren(wrap);
 
   if (allNodes.some((n) => n.status === "pending")) {
