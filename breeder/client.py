@@ -71,19 +71,9 @@ async def poll_and_fetch(task_id: str) -> list[tuple[bytes, Optional[str]]]:
     return await fetch_images(data)
 
 
-async def render(spec: dict) -> list[tuple[bytes, Optional[str]]]:
-    task_id = await submit(spec)
-    return await poll_and_fetch(task_id)
-
-
 async def submit_img2img(spec: dict, init_image_b64: str) -> str:
     body = {**spec, "mode": 0, "init_img": {"encoded_image": init_image_b64}}
     async with httpx.AsyncClient(timeout=30) as http:
         resp = await http.post(f"{config.API_BASE}/img2img", json=body, headers=HEADERS)
         resp.raise_for_status()
         return resp.json()["data"]["task_id"]
-
-
-async def render_img2img(spec: dict, init_image_b64: str) -> list[tuple[bytes, Optional[str]]]:
-    task_id = await submit_img2img(spec, init_image_b64)
-    return await poll_and_fetch(task_id)
