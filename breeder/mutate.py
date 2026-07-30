@@ -7,7 +7,7 @@ import corpus
 import promptsyntax
 from promptsyntax import KEYWORD_WEIGHT_RE, LORA_RE
 
-SAMPLERS = ["Euler a", "Euler", "DPM++ 2M", "DPM++ 2M Karras", "DPM++ SDE Karras", "UniPC"]
+SAMPLERS = ["DPM++ 2M SDE", "Euler a", "Euler", "DPM++ 2M", "DPM++ 2M Karras", "DPM++ SDE Karras", "UniPC"]
 MODIFIERS = [
     "highly detailed", "cinematic lighting", "soft focus", "vivid colors",
     "dramatic lighting", "shallow depth of field", "intricate detail",

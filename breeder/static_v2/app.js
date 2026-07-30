@@ -12,7 +12,11 @@ const api = {
 
 // duplicated from mutate.py's SAMPLERS -- breeder has no /api/samplers endpoint,
 // this is just a suggestion list (the sampler field accepts free text)
-const SAMPLERS = ["Euler a", "Euler", "DPM++ 2M", "DPM++ 2M Karras", "DPM++ SDE Karras", "UniPC"];
+const SAMPLERS = ["DPM++ 2M SDE", "Euler a", "Euler", "DPM++ 2M", "DPM++ 2M Karras", "DPM++ SDE Karras", "UniPC"];
+const SIZE_OPTIONS = [
+  { width: 800, height: 1200 },
+  { width: 1200, height: 800 },
+];
 const REROLL_OPTIONS = [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
 
 function el(tag, attrs = {}, children = []) {
@@ -162,6 +166,28 @@ function numField(form, label, key, opts = {}) {
   return input;
 }
 
+function buildSizeField(form) {
+  const currentKey = `${formSpec.width}x${formSpec.height}`;
+  const select = el("select");
+  let seen = false;
+  for (const opt of SIZE_OPTIONS) {
+    const key = `${opt.width}x${opt.height}`;
+    if (key === currentKey) seen = true;
+    select.appendChild(el("option", { value: key, text: `${opt.width} x ${opt.height}` }));
+  }
+  if (!seen) {
+    // preserve an existing node's size even if it predates these two presets
+    select.appendChild(el("option", { value: currentKey, text: `${formSpec.width} x ${formSpec.height}` }));
+  }
+  select.value = currentKey;
+  select.addEventListener("change", () => {
+    const [w, h] = select.value.split("x").map(Number);
+    formSpec.width = w;
+    formSpec.height = h;
+  });
+  form.appendChild(fieldRow("Size", select));
+}
+
 function buildModelField(form, models) {
   const currentName = formSpec.model_name || "";
   const currentHash = formSpec.model_hash || "";
@@ -235,13 +261,13 @@ function buildForm(spec, knownModels) {
   form.appendChild(datalist);
   form.appendChild(fieldRow("Sampler", samplerInput));
 
+  buildSizeField(form);
+
   const numRow = el("div", { class: "field-grid" });
   form.appendChild(numRow);
   numField(numRow, "Steps", "steps", { min: "1", max: "150" });
   numField(numRow, "CFG scale", "cfg_scale", { min: "1", max: "30", step: "0.5" });
   numField(numRow, "Seed", "seed", { step: "1" });
-  numField(numRow, "Width", "width", { min: "64", step: "64" });
-  numField(numRow, "Height", "height", { min: "64", step: "64" });
   numField(numRow, "Clip skip", "clip_skip", { min: "1", max: "12" });
   numField(numRow, "Batch size", "batch_size", { min: "1", max: "8" });
   numField(numRow, "N iter", "n_iter", { min: "1", max: "8" });
