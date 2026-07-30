@@ -69,25 +69,6 @@ button:disabled { opacity: 0.5; cursor: default; }
 }
 .splitter:hover, .splitter.dragging { background: var(--accent); }
 
-.browser-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
-.browser-header h2 { margin: 0; }
-
-.new-root-panel { margin-bottom: 16px; }
-.new-root-toggle { width: 100%; }
-.new-root-form {
-  margin-top: 10px;
-  padding: 12px;
-  background: var(--bg-panel-alt);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.new-root-form .field-prompt { min-height: 60px; }
-.new-root-buttons { display: flex; gap: 8px; }
-.new-root-buttons .btn-breed { margin-left: 0; flex: 1; }
-
 .thumb-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
@@ -123,6 +104,7 @@ button:disabled { opacity: 0.5; cursor: default; }
 }
 
 .crumbs { display: flex; align-items: center; gap: 4px; margin-bottom: 20px; font-size: 14px; color: var(--text-dim); }
+.new-root-link { margin-left: auto; font-size: 12px; padding: 5px 10px; }
 .crumb-sep { margin: 0 2px; font-size: 16px; font-weight: 600; }
 .crumb-sep:last-child { display: none; }
 .crumb-thumb, .crumb-pending {

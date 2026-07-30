@@ -116,79 +116,9 @@ function thumbCard(node, selected) {
   return card;
 }
 
-function buildNewRootPanel(knownModels, forceOpen) {
-  const wrap = el("div", { class: "new-root-panel" });
-  const toggleBtn = el("button", { class: "new-root-toggle", text: "+ New" });
-  const formBox = el("div", { class: "new-root-form" });
-  formBox.style.display = forceOpen ? "" : "none";
-
-  const promptInput = el("textarea", { class: "field-prompt", placeholder: "prompt" });
-
-  const select = el("select");
-  select.appendChild(el("option", { value: "", text: "(use default)" }));
-  for (const m of knownModels) {
-    const key = `${m.model_name}|${m.model_hash}`;
-    const label = m.model_hash ? `${m.model_name} [${m.model_hash}]` : m.model_name;
-    select.appendChild(el("option", { value: key, text: label }));
-  }
-  select.appendChild(el("option", { value: "__custom__", text: "custom..." }));
-
-  const customInput = el("input", { type: "text", placeholder: "model name" });
-  customInput.style.display = "none";
-  select.addEventListener("change", () => {
-    customInput.style.display = select.value === "__custom__" ? "" : "none";
-    if (select.value === "__custom__") customInput.focus();
-  });
-
-  const createBtn = el("button", { class: "btn-breed", text: "Create" });
-  createBtn.addEventListener("click", async () => {
-    const prompt = promptInput.value.trim();
-    if (!prompt) {
-      alert("enter a prompt first");
-      return;
-    }
-    createBtn.disabled = true;
-    createBtn.textContent = "Creating...";
-    const overrides = {};
-    if (select.value === "__custom__") {
-      if (customInput.value.trim()) overrides.model_name = customInput.value.trim();
-    } else if (select.value !== "") {
-      const [name, modelHash] = select.value.split("|");
-      overrides.model_name = name;
-      overrides.model_hash = modelHash;
-    }
-    const node = await api.post("/api/root", { prompt, overrides });
-    navigate(node.id);
-  });
-
-  const cancelBtn = el("button", { text: "Cancel" });
-  cancelBtn.addEventListener("click", () => {
-    formBox.style.display = "none";
-  });
-
-  formBox.appendChild(promptInput);
-  formBox.appendChild(fieldRow("Model", select));
-  formBox.appendChild(customInput);
-  const btnRow = el("div", { class: "new-root-buttons" });
-  btnRow.appendChild(createBtn);
-  btnRow.appendChild(cancelBtn);
-  formBox.appendChild(btnRow);
-
-  toggleBtn.addEventListener("click", () => {
-    formBox.style.display = formBox.style.display === "none" ? "" : "none";
-  });
-
-  wrap.appendChild(toggleBtn);
-  wrap.appendChild(formBox);
-  return wrap;
-}
-
-function buildBrowserPanel(allNodes, focusId, knownModels) {
+function buildBrowserPanel(allNodes, focusId) {
   const panel = el("div", { class: "browser-panel" });
-  const header = el("div", { class: "browser-header" });
-  header.appendChild(el("h2", { text: "Breeder Studio" }));
-  panel.appendChild(header);
-  panel.appendChild(buildNewRootPanel(knownModels, allNodes.length === 0));
+  panel.appendChild(el("h2", { text: "Breeder Studio" }));
   const grid = el("div", { class: "thumb-grid" });
   for (const node of allNodes) {
     grid.appendChild(thumbCard(node, node.id === focusId));
@@ -394,13 +324,39 @@ function buildBreedControls(node) {
   return box;
 }
 
+function buildCreateControls() {
+  const box = el("div", { class: "breed-controls" });
+  const createBtn = el("button", { class: "btn-breed", text: "Create" });
+  createBtn.addEventListener("click", async () => {
+    createBtn.disabled = true;
+    createBtn.textContent = "Creating...";
+    const { prompt, ...overrides } = formSpec;
+    const node = await api.post("/api/root", { prompt, overrides });
+    navigate(node.id);
+  });
+  box.appendChild(createBtn);
+  return box;
+}
+
+function newRootLink() {
+  const link = el("button", { class: "new-root-link", text: "+ New" });
+  link.addEventListener("click", () => navigate("new"));
+  return link;
+}
+
 async function buildDetailPanel(focusId, knownModels) {
   const panel = el("div", { class: "detail-panel" });
-  if (!focusId) {
-    panel.appendChild(el("div", {
-      class: "empty-state",
-      text: "No generations yet -- use + New on the left to start from a prompt, or import an image via the classic UI.",
-    }));
+
+  if (focusId === "new") {
+    const rebuildForm = formFocusId !== "new";
+    if (rebuildForm) formFocusId = "new";
+    const seedSpec = rebuildForm ? await api.get("/api/defaults") : formSpec;
+
+    const main = el("div", { class: "detail-main" });
+    main.appendChild(el("div", { class: "placeholder", text: "not generated yet" }));
+    main.appendChild(buildForm(seedSpec, knownModels));
+    panel.appendChild(main);
+    panel.appendChild(buildCreateControls());
     return panel;
   }
 
@@ -409,7 +365,9 @@ async function buildDetailPanel(focusId, knownModels) {
     api.get(`/api/nodes/${focusId}/ancestors`),
   ]);
 
-  panel.appendChild(breadcrumbs(ancestors.slice(0, -1)));
+  const crumbBar = breadcrumbs(ancestors.slice(0, -1));
+  crumbBar.appendChild(newRootLink());
+  panel.appendChild(crumbBar);
 
   const main = el("div", { class: "detail-main" });
   const imageBox = el("div", { class: "detail-image" });
@@ -439,12 +397,12 @@ async function render() {
     api.get("/api/models"),
   ]);
   let focusId = currentNodeId();
-  if (!focusId || !allNodes.some((n) => n.id === focusId)) {
-    focusId = allNodes.length ? allNodes[0].id : null;
+  if (focusId !== "new" && (!focusId || !allNodes.some((n) => n.id === focusId))) {
+    focusId = allNodes.length ? allNodes[0].id : "new";
   }
 
   const wrap = el("div", { class: "studio" });
-  const browserPanel = buildBrowserPanel(allNodes, focusId, knownModels);
+  const browserPanel = buildBrowserPanel(allNodes, focusId);
   browserPanel.style.width = `${getBrowserWidth()}px`;
   wrap.appendChild(browserPanel);
   wrap.appendChild(buildSplitter(browserPanel));

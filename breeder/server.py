@@ -59,9 +59,12 @@ async def _auto_scan_corpus() -> None:
 
 DEFAULTS = {
     # Pony Diffusion V6 XL was trained with score-based captions -- omitting
-    # these tags noticeably degrades output. Only relevant while the bootstrap
-    # default model (config.DEFAULT_MODEL_NAME) is actually in use; see the
-    # PONY_PROMPT_PREFIX handling in create_root().
+    # these tags noticeably degrades output. Shown and editable as ordinary
+    # prompt/negative_prompt text (Studio's fresh-start form seeds from this
+    # dict directly via GET /api/defaults) rather than injected invisibly, so
+    # there's nothing hidden about it -- it's only appropriate for this specific
+    # bootstrap default model, and only because that's what it's a default for.
+    "prompt": "score_9, score_8_up, score_7_up, score_6_up",
     "negative_prompt": (
         "score_6, score_5, score_4, source_pony, source_furry, source_cartoon, "
         "worst quality, low quality, bad anatomy, bad hands, extra digit, fewer digits, "
@@ -79,8 +82,6 @@ DEFAULTS = {
     "batch_size": 1,
     "n_iter": 1,
 }
-
-PONY_PROMPT_PREFIX = "score_9, score_8_up, score_7_up, score_6_up"
 
 DEFAULT_DENOISING_STRENGTH = 0.75
 
@@ -185,14 +186,7 @@ async def _render_node(
 
 @app.post("/api/root")
 async def create_root(req: RootRequest):
-    spec = {**DEFAULTS, **req.overrides}
-    prompt = req.prompt
-    # only relevant while the bootstrap default model is actually in use --
-    # req.overrides may have picked a different model, in which case these
-    # Pony-specific tags would just be irrelevant noise
-    if config.DEFAULT_MODEL_NAME and spec["model_name"] == config.DEFAULT_MODEL_NAME:
-        prompt = f"{PONY_PROMPT_PREFIX}, {prompt}"
-    spec["prompt"] = prompt
+    spec = {**DEFAULTS, **req.overrides, "prompt": req.prompt}
     spec = mutate.ensure_concrete_seed(spec)
     node = await store.create_node(spec, parent_id=None)
     asyncio.create_task(_render_node(node["id"], spec))
@@ -310,6 +304,11 @@ async def get_roots():
 @app.get("/api/nodes")
 async def get_all_nodes():
     return store.all_nodes()
+
+
+@app.get("/api/defaults")
+async def get_defaults():
+    return DEFAULTS
 
 
 @app.get("/api/models")
