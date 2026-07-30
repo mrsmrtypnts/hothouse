@@ -173,3 +173,7 @@ def roots() -> list[dict]:
         key=lambda n: n["created_at"],
         reverse=True,
     )
+
+
+def all_nodes() -> list[dict]:
+    return sorted(_nodes.values(), key=lambda n: n["created_at"], reverse=True)

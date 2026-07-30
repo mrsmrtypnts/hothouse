@@ -75,6 +75,13 @@ class VariationsRequest(BaseModel):
     count: int = 6
     mode: str = "txt2img"
     denoising_strength: Optional[float] = None
+    # defaults approximate the old implicit (reroll entangled with 1-2 other
+    # mutators) behavior, for the old UI, which never sends these two fields
+    reroll_probability: float = 0.5
+    mutator_intensity: float = 1.0
+    # ephemeral override for the base spec (new UI's edited form) -- never
+    # written back to the parent node's stored spec
+    spec: Optional[dict] = None
 
 
 class CorpusScanRequest(BaseModel):
@@ -197,7 +204,10 @@ async def create_variations(node_id: str, req: VariationsRequest):
             raise HTTPException(400, "parent must be a completed render to use img2img")
         init_bytes = (config.IMAGE_DIR / parent["image_file"]).read_bytes()
 
-    mutations = mutate.generate_children(parent["spec"], req.count)
+    base_spec = req.spec if req.spec is not None else parent["spec"]
+    reroll_probability = min(1.0, max(0.0, req.reroll_probability))
+    mutator_intensity = max(0.0, req.mutator_intensity)
+    mutations = mutate.generate_children(base_spec, req.count, reroll_probability, mutator_intensity)
     batch_id = uuid.uuid4().hex
     new_nodes = []
     for spec, label in mutations:
@@ -271,6 +281,11 @@ async def get_roots():
     return store.roots()
 
 
+@app.get("/api/nodes")
+async def get_all_nodes():
+    return store.all_nodes()
+
+
 @app.post("/api/pick-directory")
 async def pick_directory():
     script = 'POSIX path of (choose folder with prompt "Select a directory to scan")'
@@ -321,4 +336,7 @@ async def recover_orphaned_renders() -> None:
 
 
 app.mount("/images", StaticFiles(directory=str(config.IMAGE_DIR)), name="images")
+# must be mounted before the catch-all "/" below -- Starlette matches mounts in
+# registration order by prefix, so "/" registered first would swallow /v2/* too
+app.mount("/v2", StaticFiles(directory=str(Path(__file__).parent / "static_v2"), html=True), name="static_v2")
 app.mount("/", StaticFiles(directory=str(Path(__file__).parent / "static"), html=True), name="static")

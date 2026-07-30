@@ -203,7 +203,6 @@ def _add_learned_lora(spec: dict) -> str:
 
 
 MUTATOR_WEIGHTS = [
-    (_reroll_seed, 4.0),
     (_nudge_cfg_scale, 0.4),
     (_nudge_steps, 0.4),
     (_swap_sampler, 0.4),
@@ -252,31 +251,52 @@ def _tags_cancel(tags: list[str]) -> bool:
     return False
 
 
-def mutate_once(spec: dict) -> tuple[dict, str]:
+def _sample_count(intensity: float, pool_size: int) -> int:
+    # floor + probabilistic remainder so E[k] == intensity exactly
+    # (e.g. intensity=1.5 -> 50% chance of 1, 50% chance of 2)
+    lo = int(intensity)
+    frac = intensity - lo
+    k = lo + (1 if random.random() < frac else 0)
+    return max(0, min(k, pool_size))
+
+
+def mutate_once(spec: dict, reroll_probability: float, mutator_intensity: float) -> tuple[dict, str]:
     for _ in range(10):
         child = copy.deepcopy(spec)
-        fns = _weighted_sample(MUTATOR_WEIGHTS, k=random.randint(1, 2))
-        tags = [fn(child) for fn in fns]
+        tags = []
+        if random.random() < reroll_probability:
+            tags.append(_reroll_seed(child))
+        k = _sample_count(mutator_intensity, len(MUTATOR_WEIGHTS))
+        if k:
+            tags.extend(fn(child) for fn in _weighted_sample(MUTATOR_WEIGHTS, k=k))
+        if not tags:
+            return child, "(no change)"
         if not _tags_cancel(tags):
             return child, ", ".join(tags)
     # give up combining and fall back to a single mutator, which can't self-cancel
     child = copy.deepcopy(spec)
-    fn = _weighted_sample(MUTATOR_WEIGHTS, k=1)[0]
-    tag = fn(child)
+    if reroll_probability > 0:
+        tag = _reroll_seed(child)
+    else:
+        fn = _weighted_sample(MUTATOR_WEIGHTS, k=1)[0]
+        tag = fn(child)
     return child, tag
 
 
-def generate_children(spec: dict, count: int) -> list[tuple[dict, str]]:
+def generate_children(
+    spec: dict, count: int, reroll_probability: float = 1.0, mutator_intensity: float = 1.0
+) -> list[tuple[dict, str]]:
     children: list[tuple[dict, str]] = []
     seen: set[str] = set()
     for _ in range(count):
-        # reroll always yields a distinct seed, so a collision here means two
-        # deterministic mutations landed on an identical result -- retry those
-        child, label = mutate_once(spec)
+        # a collision here means two independently-sampled mutations landed on an
+        # identical result (guaranteed if both knobs are 0) -- retry a few times,
+        # but duplicates are an acceptable outcome of that explicit choice
+        child, label = mutate_once(spec, reroll_probability, mutator_intensity)
         key = json.dumps(child, sort_keys=True)
         attempts = 0
         while key in seen and attempts < 10:
-            child, label = mutate_once(spec)
+            child, label = mutate_once(spec, reroll_probability, mutator_intensity)
             key = json.dumps(child, sort_keys=True)
             attempts += 1
         seen.add(key)
