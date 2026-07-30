@@ -4,6 +4,9 @@ __pycache__/
 *.pyo
 *.swp
 
+# local Claude Code harness state, not project content
+.claude/
+
 # secrets
 .env
 
