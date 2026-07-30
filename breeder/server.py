@@ -375,6 +375,6 @@ async def recover_orphaned_renders() -> None:
 
 app.mount("/images", StaticFiles(directory=str(config.IMAGE_DIR)), name="images")
 # must be mounted before the catch-all "/" below -- Starlette matches mounts in
-# registration order by prefix, so "/" registered first would swallow /v2/* too
-app.mount("/v2", StaticFiles(directory=str(Path(__file__).parent / "static_v2"), html=True), name="static_v2")
-app.mount("/", StaticFiles(directory=str(Path(__file__).parent / "static"), html=True), name="static")
+# registration order by prefix, so "/" registered first would swallow /classic/* too
+app.mount("/classic", StaticFiles(directory=str(Path(__file__).parent / "static"), html=True), name="static")
+app.mount("/", StaticFiles(directory=str(Path(__file__).parent / "static_v2"), html=True), name="static_v2")

@@ -43,6 +43,47 @@ function stopPolling() {
   pollTimer = null;
 }
 
+// 560px fits exactly 4 thumbnails across by default, given .thumb-grid's
+// minmax(110px, 1fr) columns, a 10px gap, and 20px panel padding on each side
+const DEFAULT_BROWSER_WIDTH = 560;
+const MIN_BROWSER_WIDTH = 240;
+const MAX_BROWSER_WIDTH = 1000;
+
+function getBrowserWidth() {
+  const stored = parseInt(sessionStorage.getItem("breederV2BrowserWidth"), 10);
+  return isNaN(stored) ? DEFAULT_BROWSER_WIDTH : stored;
+}
+function setBrowserWidth(px) {
+  sessionStorage.setItem("breederV2BrowserWidth", String(px));
+}
+
+function buildSplitter(browserPanel) {
+  const splitter = el("div", { class: "splitter" });
+  splitter.addEventListener("mousedown", (e) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startWidth = browserPanel.getBoundingClientRect().width;
+    splitter.classList.add("dragging");
+
+    function onMove(moveEvent) {
+      const next = Math.min(
+        MAX_BROWSER_WIDTH,
+        Math.max(MIN_BROWSER_WIDTH, startWidth + (moveEvent.clientX - startX))
+      );
+      browserPanel.style.width = `${next}px`;
+    }
+    function onUp() {
+      splitter.classList.remove("dragging");
+      setBrowserWidth(browserPanel.getBoundingClientRect().width);
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+    }
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  });
+  return splitter;
+}
+
 // the currently-edited spec and which focused node it belongs to -- edits are
 // ephemeral (only ever sent on the next Breed call), so this is reset from the
 // node's stored spec only when focus actually changes, never on a poll re-render
@@ -403,7 +444,10 @@ async function render() {
   }
 
   const wrap = el("div", { class: "studio" });
-  wrap.appendChild(buildBrowserPanel(allNodes, focusId, knownModels));
+  const browserPanel = buildBrowserPanel(allNodes, focusId, knownModels);
+  browserPanel.style.width = `${getBrowserWidth()}px`;
+  wrap.appendChild(browserPanel);
+  wrap.appendChild(buildSplitter(browserPanel));
   wrap.appendChild(await buildDetailPanel(focusId, knownModels));
   root.replaceChildren(wrap);
 
