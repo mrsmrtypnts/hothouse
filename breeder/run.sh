@@ -27,5 +27,33 @@ if ! venv_is_current; then
     requirements_hash > "$HASH_FILE"
 fi
 
-PORT="$("$VENV_DIR/bin/python3" -c "import config; print(config.PORT)")"
-exec "$VENV_DIR/bin/uvicorn" server:app --port "$PORT"
+port_in_use() {
+    "$VENV_DIR/bin/python3" -c "
+import socket, sys
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+try:
+    s.bind(('127.0.0.1', $1))
+except OSError:
+    sys.exit(0)
+else:
+    s.close()
+    sys.exit(1)
+"
+}
+
+CONFIGURED_PORT="$("$VENV_DIR/bin/python3" -c "import config; print(config.PORT)")"
+PORT="$CONFIGURED_PORT"
+TRIES=0
+while port_in_use "$PORT"; do
+    TRIES=$((TRIES + 1))
+    if [ "$TRIES" -gt 20 ]; then
+        echo "breeder: no free port found near $CONFIGURED_PORT after 20 tries" >&2
+        exit 1
+    fi
+    PORT=$((PORT + 1))
+done
+if [ "$PORT" != "$CONFIGURED_PORT" ]; then
+    echo "breeder: port $CONFIGURED_PORT already in use, using $PORT instead" >&2
+fi
+
+BREEDER_PORT="$PORT" exec "$VENV_DIR/bin/uvicorn" server:app --port "$PORT"

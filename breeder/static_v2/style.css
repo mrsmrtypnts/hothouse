@@ -92,8 +92,10 @@ button:disabled { opacity: 0.5; cursor: default; }
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--text-faint);
-  font-size: 11px;
+  color: var(--text-dim);
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: 2px;
 }
 .thumb-status.thumb-error { color: #d97a7a; }
 
@@ -168,6 +170,10 @@ button:disabled { opacity: 0.5; cursor: default; }
   padding-top: 16px;
   border-top: 1px solid var(--border);
 }
+.reroll-row { display: flex; align-items: center; gap: 8px; }
+.reroll-row input[type=range] { width: 120px; accent-color: var(--accent); }
+.reroll-readout { min-width: 34px; font-size: 13px; color: var(--text-dim); }
+
 .mode-toggle { display: flex; border: 1px solid var(--border-light); border-radius: var(--radius-sm); overflow: hidden; }
 .mode-toggle button { border: none; border-radius: 0; background: transparent; color: var(--text-dim); }
 .mode-toggle button + button { border-left: 1px solid var(--border-light); }

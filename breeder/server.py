@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import io
+import os
 import secrets
 import threading
 import uuid
@@ -26,7 +27,24 @@ import store
 # not just this one -- Fast User Switching or `su` lets another account reach
 # this port with nothing more than a guess. ACCESS_TOKEN closes that gap: pass
 # it once via ?token=, and a cookie carries it for the rest of the session.
-ACCESS_TOKEN = secrets.token_hex(24)
+#
+# Persisted rather than regenerated per-process so a restart doesn't invalidate
+# every open tab/bookmark -- its job is blocking other local accounts, not
+# defending against a sophisticated attacker, so it doesn't need to rotate on
+# every restart. Delete the file to force a fresh token.
+_TOKEN_PATH = config.DATA_DIR / "access_token"
+
+
+def _load_or_create_token() -> str:
+    if _TOKEN_PATH.exists():
+        return _TOKEN_PATH.read_text().strip()
+    token = secrets.token_hex(24)
+    _TOKEN_PATH.write_text(token)
+    _TOKEN_PATH.chmod(0o600)
+    return token
+
+
+ACCESS_TOKEN = _load_or_create_token()
 TOKEN_COOKIE = "breeder_token"
 
 app = FastAPI()
@@ -46,7 +64,9 @@ async def _require_token(request: Request, call_next):
 async def _print_access_url() -> None:
     url = f"http://127.0.0.1:{config.PORT}/?token={ACCESS_TOKEN}"
     print(f"breeder: {url}")
-    threading.Timer(0.5, lambda: webbrowser.open(url)).start()
+    # set for throwaway/test instances so they don't spawn real browser tabs
+    if not os.environ.get("BREEDER_NO_BROWSER_OPEN"):
+        threading.Timer(0.5, lambda: webbrowser.open(url)).start()
 
 
 @app.on_event("startup")
@@ -191,6 +211,26 @@ async def create_root(req: RootRequest):
     node = await store.create_node(spec, parent_id=None)
     asyncio.create_task(_render_node(node["id"], spec))
     return node
+
+
+@app.post("/api/root/breed")
+async def breed_roots(req: VariationsRequest):
+    # fresh-start Breed: no parent node exists yet, so this mutates the given
+    # spec directly into `count` independent root nodes (sharing a batch_id)
+    # rather than creating one exact-spec root plus N children of it
+    if req.spec is None:
+        raise HTTPException(400, "spec is required")
+    reroll_probability = min(1.0, max(0.0, req.reroll_probability))
+    mutator_intensity = max(0.0, req.mutator_intensity)
+    base_spec = mutate.ensure_concrete_seed(req.spec)
+    mutations = mutate.generate_children(base_spec, req.count, reroll_probability, mutator_intensity)
+    batch_id = uuid.uuid4().hex
+    new_nodes = []
+    for spec, label in mutations:
+        node = await store.create_node(spec, parent_id=None, label=label, batch_id=batch_id, render_mode="txt2img")
+        asyncio.create_task(_render_node(node["id"], spec, None, label, "txt2img", None))
+        new_nodes.append(node)
+    return new_nodes
 
 
 @app.post("/api/root/from-image")

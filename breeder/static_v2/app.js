@@ -17,7 +17,6 @@ const SIZE_OPTIONS = [
   { width: 800, height: 1200 },
   { width: 1200, height: 800 },
 ];
-const REROLL_OPTIONS = [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
 
 function el(tag, attrs = {}, children = []) {
   const node = document.createElement(tag);
@@ -269,23 +268,33 @@ function buildForm(spec, knownModels) {
   numField(numRow, "CFG scale", "cfg_scale", { min: "1", max: "30", step: "0.5" });
   numField(numRow, "Seed", "seed", { step: "1" });
   numField(numRow, "Clip skip", "clip_skip", { min: "1", max: "12" });
-  numField(numRow, "Batch size", "batch_size", { min: "1", max: "8" });
-  numField(numRow, "N iter", "n_iter", { min: "1", max: "8" });
 
   return form;
+}
+
+function buildRerollField() {
+  const wrap = el("div", { class: "field-row" });
+  wrap.appendChild(el("span", { class: "field-label", text: "Reroll probability" }));
+  const row = el("div", { class: "reroll-row" });
+  const slider = el("input", { type: "range", min: "0", max: "100", step: "10" });
+  slider.value = "50";
+  const readout = el("span", { class: "reroll-readout", text: "50%" });
+  slider.addEventListener("input", () => {
+    readout.textContent = `${slider.value}%`;
+  });
+  row.appendChild(slider);
+  row.appendChild(readout);
+  wrap.appendChild(row);
+  return { wrap, slider };
 }
 
 function buildBreedControls(node) {
   const box = el("div", { class: "breed-controls" });
 
   const countInput = el("input", { type: "number", min: "1", max: "30" });
-  countInput.value = "6";
+  countInput.value = "4";
 
-  const rerollSelect = el("select");
-  for (const pct of REROLL_OPTIONS) {
-    rerollSelect.appendChild(el("option", { value: String(pct / 100), text: `${pct}% reroll` }));
-  }
-  rerollSelect.value = "0.5";
+  const reroll = buildRerollField();
 
   const intensityInput = el("input", { type: "number", min: "0", step: "0.5" });
   intensityInput.value = "1";
@@ -328,7 +337,7 @@ function buildBreedControls(node) {
     const body = {
       count: parseInt(countInput.value, 10) || 1,
       mode,
-      reroll_probability: parseFloat(rerollSelect.value),
+      reroll_probability: parseFloat(reroll.slider.value) / 100,
       mutator_intensity: parseFloat(intensityInput.value) || 0,
       spec: formSpec,
     };
@@ -342,7 +351,7 @@ function buildBreedControls(node) {
   });
 
   box.appendChild(fieldRow("Count", countInput));
-  box.appendChild(fieldRow("Mutation", rerollSelect));
+  box.appendChild(reroll.wrap);
   box.appendChild(fieldRow("Intensity", intensityInput));
   box.appendChild(modeToggle);
   box.appendChild(denoiseInput);
@@ -350,17 +359,35 @@ function buildBreedControls(node) {
   return box;
 }
 
-function buildCreateControls() {
+function buildFreshBreedControls() {
   const box = el("div", { class: "breed-controls" });
-  const createBtn = el("button", { class: "btn-breed", text: "Breed" });
-  createBtn.addEventListener("click", async () => {
-    createBtn.disabled = true;
-    createBtn.textContent = "Breeding...";
-    const { prompt, ...overrides } = formSpec;
-    const node = await api.post("/api/root", { prompt, overrides });
-    navigate(node.id);
+
+  const countInput = el("input", { type: "number", min: "1", max: "30" });
+  countInput.value = "4";
+
+  const reroll = buildRerollField();
+
+  const intensityInput = el("input", { type: "number", min: "0", step: "0.5" });
+  intensityInput.value = "1";
+
+  const breedBtn = el("button", { class: "btn-breed", text: "Breed" });
+  breedBtn.addEventListener("click", async () => {
+    breedBtn.disabled = true;
+    breedBtn.textContent = "Breeding...";
+    const body = {
+      count: parseInt(countInput.value, 10) || 1,
+      reroll_probability: parseFloat(reroll.slider.value) / 100,
+      mutator_intensity: parseFloat(intensityInput.value) || 0,
+      spec: formSpec,
+    };
+    const nodes = await api.post("/api/root/breed", body);
+    navigate(nodes[0].id);
   });
-  box.appendChild(createBtn);
+
+  box.appendChild(fieldRow("Count", countInput));
+  box.appendChild(reroll.wrap);
+  box.appendChild(fieldRow("Intensity", intensityInput));
+  box.appendChild(breedBtn);
   return box;
 }
 
@@ -382,7 +409,7 @@ async function buildDetailPanel(focusId, knownModels) {
     main.appendChild(el("div", { class: "placeholder", text: "not generated yet" }));
     main.appendChild(buildForm(seedSpec, knownModels));
     panel.appendChild(main);
-    panel.appendChild(buildCreateControls());
+    panel.appendChild(buildFreshBreedControls());
     return panel;
   }
 
