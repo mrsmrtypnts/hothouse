@@ -1,12 +1,16 @@
 {
   "manifest_version": 3,
   "name": "Image Downloader",
-  "version": "1.0.20",
+  "version": "1.0.21",
   "description": "Download images to a custom folder with one click",
   "permissions": [
     "nativeMessaging",
     "storage",
-    "alarms"
+    "alarms",
+    "cookies"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1/*"
   ],
   "background": {
     "service_worker": "background.js"

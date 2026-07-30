@@ -47,16 +47,41 @@ function setLastStatus(entry) {
   chrome.storage.local.set({ lastDownloadStatus: { ...entry, ts: new Date().toLocaleTimeString() } });
 }
 
+// The native host runs as a separate OS process with no access to Chrome's
+// cookie jar, so a request to a local server that gates access behind a
+// cookie (e.g. breeder's `breeder_token`) gets a bare 401/403. Those servers
+// also accept the same token via a `?token=` query param, so fetch the
+// cookie here and fold it into the URL before handing it off.
+async function withAuthToken(src) {
+  let url;
+  try {
+    url = new URL(src);
+  } catch {
+    return src;
+  }
+  if (url.hostname !== '127.0.0.1' && url.hostname !== 'localhost') return src;
+  let cookie;
+  try {
+    cookie = await chrome.cookies.get({ url: src, name: 'breeder_token' });
+  } catch {
+    return src;
+  }
+  if (!cookie?.value) return src;
+  url.searchParams.set('token', cookie.value);
+  return url.toString();
+}
+
 async function handleDownload(src, allowDupe) {
   let targetDir = await getTargetDir();
   if (!targetDir) {
     targetDir = await pickAndSaveFolder();
   }
+  const downloadUrl = await withAuthToken(src);
   console.log('[img-dl] downloading', src, '→', targetDir);
   startKeepAlive();
   let response;
   try {
-    response = await nativeMessage({ action: 'download_url', url: src, to_dir: targetDir, allow_dupe: allowDupe });
+    response = await nativeMessage({ action: 'download_url', url: downloadUrl, to_dir: targetDir, allow_dupe: allowDupe });
   } catch (e) {
     console.error('[img-dl] native messaging error:', e.message);
     setLastStatus({ ok: false, error: e.message, src });
