@@ -47,6 +47,45 @@ function stopPolling() {
   pollTimer = null;
 }
 
+// updated at the top of every render() so the arrow-key handler below can
+// navigate through the same order the thumbnail grid is actually showing
+let lastAllNodes = [];
+
+function gridColumnCount(cards) {
+  if (!cards.length) return 1;
+  const firstTop = cards[0].getBoundingClientRect().top;
+  let count = 0;
+  for (const c of cards) {
+    if (Math.abs(c.getBoundingClientRect().top - firstTop) < 2) count++;
+    else break;
+  }
+  return count || 1;
+}
+
+document.addEventListener("keydown", (e) => {
+  if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key)) return;
+  const active = document.activeElement;
+  if (active && ["INPUT", "TEXTAREA", "SELECT"].includes(active.tagName)) return;
+  if (!lastAllNodes.length) return;
+
+  const idx = lastAllNodes.findIndex((n) => n.id === currentNodeId());
+  if (idx === -1) return;
+
+  const cards = Array.from(document.querySelectorAll(".thumb-card"));
+  const cols = gridColumnCount(cards);
+  let nextIdx = idx;
+  if (e.key === "ArrowRight") nextIdx = idx + 1;
+  else if (e.key === "ArrowLeft") nextIdx = idx - 1;
+  else if (e.key === "ArrowDown") nextIdx = idx + cols;
+  else if (e.key === "ArrowUp") nextIdx = idx - cols;
+  nextIdx = Math.max(0, Math.min(lastAllNodes.length - 1, nextIdx));
+
+  if (nextIdx !== idx) {
+    e.preventDefault();
+    navigate(lastAllNodes[nextIdx].id);
+  }
+});
+
 // 560px fits exactly 4 thumbnails across by default, given .thumb-grid's
 // minmax(110px, 1fr) columns, a 10px gap, and 20px panel padding on each side
 const DEFAULT_BROWSER_WIDTH = 560;
@@ -141,8 +180,16 @@ function positionHoverPanel(panel, anchorEl) {
 function showHoverPreview(node, anchorEl) {
   hideHoverPreview();
   const panel = el("div", { class: "hover-preview" });
-  const img = el("img", { src: `/images/${node.image_file}`, alt: node.spec.prompt || node.id });
-  panel.appendChild(img);
+  let img = null;
+  if (node.status === "done") {
+    img = el("img", { src: `/images/${node.image_file}`, alt: node.spec.prompt || node.id });
+    panel.appendChild(img);
+  } else if (node.status === "error") {
+    panel.appendChild(el("div", {
+      class: "hover-error",
+      text: node.error || "(no error message)",
+    }));
+  }
   if (node.label) {
     panel.appendChild(el("div", { class: "hover-caption", text: node.label }));
   }
@@ -150,9 +197,11 @@ function showHoverPreview(node, anchorEl) {
   hoverEl = panel;
 
   positionHoverPanel(panel, anchorEl);
-  img.addEventListener("load", () => {
-    if (hoverEl === panel) positionHoverPanel(panel, anchorEl);
-  });
+  if (img) {
+    img.addEventListener("load", () => {
+      if (hoverEl === panel) positionHoverPanel(panel, anchorEl);
+    });
+  }
 }
 
 function thumbCard(node, selected) {
@@ -176,8 +225,19 @@ function thumbCard(node, selected) {
     card.appendChild(img);
   } else if (node.status === "error") {
     card.appendChild(el("div", { class: "thumb-status thumb-error", text: "failed" }));
+    const retryBtn = el("button", { class: "retry-x", text: "↻" });
+    retryBtn.title = "retry";
+    retryBtn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      retryBtn.disabled = true;
+      await api.post(`/api/nodes/${node.id}/retry`, {});
+      render();
+    });
+    card.appendChild(retryBtn);
+    card.addEventListener("mouseenter", () => showHoverPreview(node, card));
+    card.addEventListener("mouseleave", hideHoverPreview);
   } else {
-    card.appendChild(el("div", { class: "thumb-status", text: "…" }));
+    card.appendChild(el("div", { class: "thumb-status" }, [el("div", { class: "spinner" })]));
   }
   card.addEventListener("click", () => navigate(node.id));
   return card;
@@ -357,20 +417,47 @@ function buildForm(spec, knownModels) {
   return form;
 }
 
+function getRerollPct() {
+  const stored = parseInt(sessionStorage.getItem("breederV2Reroll"), 10);
+  return isNaN(stored) ? 50 : stored;
+}
+function setRerollPct(pct) {
+  sessionStorage.setItem("breederV2Reroll", String(pct));
+}
+function getMutationStrength() {
+  const stored = parseFloat(sessionStorage.getItem("breederV2MutationStrength"));
+  return isNaN(stored) ? 1 : stored;
+}
+function setMutationStrength(v) {
+  sessionStorage.setItem("breederV2MutationStrength", String(v));
+}
+
 function buildRerollField() {
   const wrap = el("div", { class: "field-row" });
   wrap.appendChild(el("span", { class: "field-label", text: "Reroll probability" }));
   const row = el("div", { class: "reroll-row" });
+  const initial = getRerollPct();
   const slider = el("input", { type: "range", min: "0", max: "100", step: "10" });
-  slider.value = "50";
-  const readout = el("span", { class: "reroll-readout", text: "50%" });
+  slider.value = String(initial);
+  const readout = el("span", { class: "reroll-readout", text: `${initial}%` });
   slider.addEventListener("input", () => {
     readout.textContent = `${slider.value}%`;
+    setRerollPct(parseInt(slider.value, 10));
   });
   row.appendChild(slider);
   row.appendChild(readout);
   wrap.appendChild(row);
   return { wrap, slider };
+}
+
+function buildMutationStrengthField() {
+  const input = el("input", { type: "number", min: "0", step: "0.5" });
+  input.value = String(getMutationStrength());
+  input.addEventListener("input", () => {
+    const v = parseFloat(input.value);
+    if (!isNaN(v)) setMutationStrength(v);
+  });
+  return { wrap: fieldRow("Mutation strength", input), input };
 }
 
 function buildBreedControls(node) {
@@ -380,9 +467,7 @@ function buildBreedControls(node) {
   countInput.value = "4";
 
   const reroll = buildRerollField();
-
-  const intensityInput = el("input", { type: "number", min: "0", step: "0.5" });
-  intensityInput.value = "1";
+  const strength = buildMutationStrengthField();
 
   let mode = getMode();
   const modeToggle = el("div", { class: "mode-toggle" });
@@ -423,7 +508,7 @@ function buildBreedControls(node) {
       count: parseInt(countInput.value, 10) || 1,
       mode,
       reroll_probability: parseFloat(reroll.slider.value) / 100,
-      mutator_intensity: parseFloat(intensityInput.value) || 0,
+      mutator_intensity: parseFloat(strength.input.value) || 0,
       spec: formSpec,
     };
     if (mode === "img2img") {
@@ -437,7 +522,7 @@ function buildBreedControls(node) {
 
   box.appendChild(fieldRow("Count", countInput));
   box.appendChild(reroll.wrap);
-  box.appendChild(fieldRow("Intensity", intensityInput));
+  box.appendChild(strength.wrap);
   box.appendChild(modeToggle);
   box.appendChild(denoiseInput);
   box.appendChild(breedBtn);
@@ -451,9 +536,7 @@ function buildFreshBreedControls() {
   countInput.value = "4";
 
   const reroll = buildRerollField();
-
-  const intensityInput = el("input", { type: "number", min: "0", step: "0.5" });
-  intensityInput.value = "1";
+  const strength = buildMutationStrengthField();
 
   const breedBtn = el("button", { class: "btn-breed", text: "Breed" });
   breedBtn.addEventListener("click", async () => {
@@ -462,7 +545,7 @@ function buildFreshBreedControls() {
     const body = {
       count: parseInt(countInput.value, 10) || 1,
       reroll_probability: parseFloat(reroll.slider.value) / 100,
-      mutator_intensity: parseFloat(intensityInput.value) || 0,
+      mutator_intensity: parseFloat(strength.input.value) || 0,
       spec: formSpec,
     };
     const nodes = await api.post("/api/root/breed", body);
@@ -471,7 +554,7 @@ function buildFreshBreedControls() {
 
   box.appendChild(fieldRow("Count", countInput));
   box.appendChild(reroll.wrap);
-  box.appendChild(fieldRow("Intensity", intensityInput));
+  box.appendChild(strength.wrap);
   box.appendChild(breedBtn);
   return box;
 }
@@ -518,14 +601,28 @@ async function buildDetailPanel(focusId, knownModels) {
   crumbBar.appendChild(newRootLink());
   panel.appendChild(crumbBar);
 
+  if (node.label) {
+    panel.appendChild(el("div", { class: "mutation-label", text: node.label }));
+  }
+
   const main = el("div", { class: "detail-main" });
   const imageBox = el("div", { class: "detail-image" });
   if (node.status === "done") {
     imageBox.appendChild(el("img", { src: `/images/${node.image_file}`, alt: "focused" }));
   } else if (node.status === "error") {
-    imageBox.appendChild(el("div", { class: "placeholder", text: `error: ${node.error || ""}` }));
+    const errBox = el("div", { class: "placeholder error-placeholder" });
+    errBox.appendChild(el("div", { class: "error-text", text: node.error || "(no error message)" }));
+    const retryBtn = el("button", { class: "retry-btn", text: "Retry" });
+    retryBtn.addEventListener("click", async () => {
+      retryBtn.disabled = true;
+      retryBtn.textContent = "Retrying...";
+      await api.post(`/api/nodes/${node.id}/retry`, {});
+      render();
+    });
+    errBox.appendChild(retryBtn);
+    imageBox.appendChild(errBox);
   } else {
-    imageBox.appendChild(el("div", { class: "placeholder", text: "rendering..." }));
+    imageBox.appendChild(el("div", { class: "placeholder" }, [el("div", { class: "spinner" })]));
   }
   main.appendChild(imageBox);
 
@@ -566,6 +663,7 @@ async function render(isPoll = false) {
     api.get("/api/nodes"),
     api.get("/api/models"),
   ]);
+  lastAllNodes = allNodes;
   let focusId = currentNodeId();
   if (focusId !== "new" && (!focusId || !allNodes.some((n) => n.id === focusId))) {
     focusId = allNodes.length ? allNodes[0].id : "new";
