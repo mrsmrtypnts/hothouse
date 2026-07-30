@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Image Downloader",
-  "version": "1.0.19",
+  "version": "1.0.20",
   "description": "Download images to a custom folder with one click",
   "permissions": [
     "nativeMessaging",

@@ -250,9 +250,11 @@
   }
 
   function isLargeEnough(img) {
-    const w = img.naturalWidth  || img.getBoundingClientRect().width;
-    const h = img.naturalHeight || img.getBoundingClientRect().height;
-    return w * h >= MIN_AREA;
+    // Compare rendered on-screen size, not natural file resolution — a small
+    // thumbnail can point at a large source file (common with CDN images),
+    // so natural size alone can't tell a thumbnail from a full-size image.
+    const rect = img.getBoundingClientRect();
+    return rect.width * rect.height >= MIN_AREA;
   }
 
   function findBiggestImage() {
