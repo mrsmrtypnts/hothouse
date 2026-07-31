@@ -10,6 +10,7 @@ triaged and implemented when you say so (e.g. "process the inbox").
 ## Pending
 
 - in the prompt fields, newlines should be respected, preserved, displayed. loras should always be listed last, and always just one per line, inserting newlines between if needed. (partially addressed -- the diff overlay now preserves real newlines in its display, see Done below. The bigger ask, auto-sorting loras to the end, is still unaddressed: needs a design pass on exactly when/how re-sorting kicks in before implementing, rather than guessing)
+- when the breadcrumb trail is very long it must be abbreviated. show the prefix and suffix but elide the middle. otherwise the "import" and "new" buttons get pushed off to the right.
 
 ## Done
 
