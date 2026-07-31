@@ -207,6 +207,7 @@ button:disabled { opacity: 0.5; cursor: default; }
   border-radius: var(--radius);
   border: 1px solid var(--border);
   display: block;
+  margin: 0 auto;
 }
 .placeholder {
   width: 720px;
