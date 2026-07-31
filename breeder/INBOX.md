@@ -11,6 +11,7 @@ triaged and implemented when you say so (e.g. "process the inbox").
 
 - in the prompt fields, newlines should be respected, preserved, displayed. loras should always be listed last, and always just one per line, inserting newlines between if needed. (bigger than a quick fix: the existing weight-nudge/diff-overlay code splits prompts on commas only, and this wants newlines to be meaningful too, plus an auto-reordering rule -- needs a design pass on exactly when/how re-sorting kicks in before implementing, rather than guessing)
 - let's make denoising strength into a slider 0 to 1 with 0.05 increments
+- the "read / unread" indicator should not toggle from unread to read if the generation hasn't yet completed. it can't be read until it's complete.
 
 ## Done
 
