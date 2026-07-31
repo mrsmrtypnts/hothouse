@@ -209,6 +209,14 @@ button:disabled { opacity: 0.5; cursor: default; }
 }
 .crumb-thumb { width: auto; }
 .crumb-pending { display: flex; align-items: center; justify-content: center; width: 48px; }
+.crumb-ellipsis {
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  color: var(--text-faint);
+}
 
 .detail-main {
   display: flex;

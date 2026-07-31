@@ -408,9 +408,23 @@ function buildBrowserPanel(allNodes, focusId) {
   return panel;
 }
 
+// Elides the middle of a long ancestor trail (keeping a few at each end) so
+// a deep lineage doesn't push the "+ New"/"Import..." buttons off-screen.
+const CRUMB_HEAD = 2;
+const CRUMB_TAIL = 2;
+function abbreviateCrumbs(ancestors) {
+  if (ancestors.length <= CRUMB_HEAD + CRUMB_TAIL + 1) return ancestors;
+  return [...ancestors.slice(0, CRUMB_HEAD), null, ...ancestors.slice(-CRUMB_TAIL)];
+}
+
 function breadcrumbs(ancestors) {
   const bar = el("div", { class: "crumbs" });
-  for (const a of ancestors) {
+  for (const a of abbreviateCrumbs(ancestors)) {
+    if (a === null) {
+      bar.appendChild(el("span", { class: "crumb-ellipsis", text: "…" }));
+      bar.appendChild(el("span", { class: "crumb-sep", text: "›" }));
+      continue;
+    }
     const caption = a.label || "original";
     let crumbEl;
     if (a.status === "done") {
