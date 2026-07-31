@@ -9,8 +9,7 @@ triaged and implemented when you say so (e.g. "process the inbox").
 
 ## Pending
 
-- in the prompt fields, newlines should be respected, preserved, displayed. loras should always be listed last, and always just one per line, inserting newlines between if needed. (bigger than a quick fix: the existing weight-nudge/diff-overlay code splits prompts on commas only, and this wants newlines to be meaningful too, plus an auto-reordering rule -- needs a design pass on exactly when/how re-sorting kicks in before implementing, rather than guessing)
-- let's make denoising strength into a slider 0 to 1 with 0.05 increments
+- in the prompt fields, newlines should be respected, preserved, displayed. loras should always be listed last, and always just one per line, inserting newlines between if needed. (partially addressed -- the diff overlay now preserves real newlines in its display, see Done below. The bigger ask, auto-sorting loras to the end, is still unaddressed: needs a design pass on exactly when/how re-sorting kicks in before implementing, rather than guessing)
 
 ## Done
 
@@ -27,6 +26,9 @@ triaged and implemented when you say so (e.g. "process the inbox").
 - when i use the arrow keys to navigate in the thumb browser, if i keep going down the selected thumb is no longer visible. the view should scroll down so that the selected thumb is always visible. (scrollIntoView after every render, not just keyboard nav)
 - the filter controls have the same problem we've seen with other ui elements in the past: they keep losing focus if generations are in process. (real regression -- the poll-skip guard only checked focus inside .detail-panel, not .browser-panel where the filter inputs live; broadened the check to cover both)
 - [URGENT] something went wrong in recent commit. now i can't click in to prompt text boxes at all. (couldn't reproduce the exact symptom -- careful testing showed the diff-overlay's pointer-events:none click-through was actually working. But that design was fragile regardless: if pointer-events ever failed for any reason in some browser/environment, the whole prompt box becomes unusable, which is a bad failure mode for a cosmetic feature. Redesigned so the overlay is itself directly clickable -- dismisses and focuses the real textarea on mousedown -- instead of depending on CSS click-through at all. If this doesn't fix what you were seeing, please add more detail -- browser, exactly which field, whether it's every prompt field or just ones showing the diff overlay.)
+- let's make denoising strength into a slider 0 to 1 with 0.05 increments (converted the plain number input to a range slider with a readout, matching the reroll-probability slider's style)
+- the "read / unread" indicator should not toggle from unread to read if the generation hasn't yet completed. it can't be read until it's complete. (real bug -- render() marked the focused node viewed regardless of status; now skips marking while status is "pending")
+- it looks like newlines in the prompt are saved but not displayed in the prompt text box until the cursor enters it. like, the prompt has newlines in it, and once i click into the box, they become visible i..e. are used to make new lines. but before i click into the box they are not respected in the way the prompt is displayed. (real bug in the diff overlay -- it rebuilt segments with a flat ", " separator, discarding real newlines. Now captures and reuses the actual separator text between segments, so line breaks in the real value show up in the overlay too)
 
 ## Won't fix
 

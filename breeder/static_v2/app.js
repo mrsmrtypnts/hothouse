@@ -580,6 +580,25 @@ function buildMutationStrengthField() {
   return { wrap: fieldRow("Mutation strength", input), input };
 }
 
+function buildDenoiseField() {
+  const wrap = el("div", { class: "field-row" });
+  wrap.appendChild(el("span", { class: "field-label", text: "Denoising strength" }));
+  const row = el("div", { class: "reroll-row" });
+  const initial = getDenoise();
+  const slider = el("input", { type: "range", min: "0", max: "1", step: "0.05" });
+  slider.value = String(initial);
+  const readout = el("span", { class: "reroll-readout", text: initial.toFixed(2) });
+  slider.addEventListener("input", () => {
+    const v = parseFloat(slider.value);
+    readout.textContent = v.toFixed(2);
+    setDenoise(v);
+  });
+  row.appendChild(slider);
+  row.appendChild(readout);
+  wrap.appendChild(row);
+  return { wrap, slider };
+}
+
 function buildBreedControls(node) {
   const box = el("div", { class: "breed-controls" });
 
@@ -593,22 +612,12 @@ function buildBreedControls(node) {
   const modeToggle = el("div", { class: "mode-toggle" });
   const txt2imgBtn = el("button", { type: "button", text: "txt2img" });
   const img2imgBtn = el("button", { type: "button", text: "img2img" });
-  const denoiseInput = el("input", {
-    type: "number", min: "0", max: "1", step: "0.05", class: "denoise-input",
-  });
-  denoiseInput.value = getDenoise().toFixed(2);
-  denoiseInput.addEventListener("change", () => {
-    const v = parseFloat(denoiseInput.value);
-    if (!isNaN(v)) {
-      denoiseInput.value = v.toFixed(2);
-      setDenoise(v);
-    }
-  });
+  const denoise = buildDenoiseField();
 
   function updateModeUI() {
     txt2imgBtn.classList.toggle("active", mode === "txt2img");
     img2imgBtn.classList.toggle("active", mode === "img2img");
-    denoiseInput.style.display = mode === "img2img" ? "" : "none";
+    denoise.wrap.style.display = mode === "img2img" ? "" : "none";
   }
   txt2imgBtn.addEventListener("click", () => { mode = "txt2img"; setMode(mode); updateModeUI(); });
   img2imgBtn.addEventListener("click", () => { mode = "img2img"; setMode(mode); updateModeUI(); });
@@ -632,7 +641,7 @@ function buildBreedControls(node) {
       spec: formSpec,
     };
     if (mode === "img2img") {
-      body.denoising_strength = parseFloat(denoiseInput.value) || 0.75;
+      body.denoising_strength = parseFloat(denoise.slider.value) || 0.75;
     }
     await api.post(`/api/nodes/${node.id}/variations`, body);
     breedBtn.disabled = false;
@@ -644,7 +653,7 @@ function buildBreedControls(node) {
   box.appendChild(reroll.wrap);
   box.appendChild(strength.wrap);
   box.appendChild(modeToggle);
-  box.appendChild(denoiseInput);
+  box.appendChild(denoise.wrap);
   box.appendChild(breedBtn);
   return box;
 }
@@ -781,6 +790,29 @@ function splitSegments(text) {
   return (text || "").split(",").map((s) => s.trim()).filter(Boolean);
 }
 
+// like splitSegments, but also returns the actual separator text between
+// each pair of segments (comma plus whatever whitespace/newlines followed
+// it) so the diff overlay can reproduce real line breaks instead of
+// flattening everything to ", "
+function splitSegmentsPreservingSeparators(text) {
+  const parts = (text || "").split(/(,\s*)/);
+  const segs = [];
+  const seps = [];
+  let pendingSep = "";
+  for (let i = 0; i < parts.length; i++) {
+    if (i % 2 === 1) {
+      pendingSep = parts[i];
+      continue;
+    }
+    const trimmed = parts[i].trim();
+    if (!trimmed) continue;
+    if (segs.length > 0) seps.push(pendingSep || ", ");
+    segs.push(trimmed);
+    pendingSep = "";
+  }
+  return { segs, seps };
+}
+
 // classic LCS-based diff over segment names, so removed/added segments show
 // up in a sensible relative order rather than just "removed stuff at the end"
 function diffSegmentOps(parentNames, currentNames) {
@@ -812,33 +844,38 @@ function diffSegmentOps(parentNames, currentNames) {
   return ops;
 }
 
-// Builds {text, cls} spans diffing currentText against parentText: unchanged
-// segments in the default color, added segments green, removed segments a
-// faded/struck-through "ghost" (they're not actually in currentText), and
-// same-name segments whose weight changed colored by direction.
+// Builds {text, cls, sepBefore} spans diffing currentText against parentText:
+// unchanged segments in the default color, added segments green, removed
+// segments a faded/struck-through "ghost" (they're not actually in
+// currentText), and same-name segments whose weight changed colored by
+// direction. sepBefore reproduces currentText's real separators (including
+// any newlines) for real segments; ghosts have no real anchor, so they just
+// get a plain ", ".
 function buildPromptDiffSpans(parentText, currentText) {
   const parentSegs = splitSegments(parentText).map(parseSegment);
-  const currentSegs = splitSegments(currentText).map(parseSegment);
+  const { segs: currentNames, seps: currentSeps } = splitSegmentsPreservingSeparators(currentText);
+  const currentSegs = currentNames.map(parseSegment);
   const ops = diffSegmentOps(parentSegs.map((s) => s.name), currentSegs.map((s) => s.name));
 
-  return ops.map((op) => {
+  return ops.map((op, i) => {
+    const sepBefore = i === 0 ? "" : (op.type !== "remove" && op.cIdx > 0 ? currentSeps[op.cIdx - 1] : ", ");
     if (op.type === "remove") {
-      return { text: buildSegmentText(parentSegs[op.pIdx]), cls: "diff-removed" };
+      return { text: buildSegmentText(parentSegs[op.pIdx]), cls: "diff-removed", sepBefore };
     }
     if (op.type === "add") {
-      return { text: buildSegmentText(currentSegs[op.cIdx]), cls: "diff-added" };
+      return { text: buildSegmentText(currentSegs[op.cIdx]), cls: "diff-added", sepBefore };
     }
     const p = parentSegs[op.pIdx], c = currentSegs[op.cIdx];
     let cls = "diff-unchanged";
     if (p.weight !== c.weight) cls = p.weight < c.weight ? "diff-increased" : "diff-decreased";
-    return { text: buildSegmentText(c), cls };
+    return { text: buildSegmentText(c), cls, sepBefore };
   });
 }
 
 function buildDiffOverlay(spans) {
   const overlay = el("div", { class: "field-diff-overlay" });
-  spans.forEach((s, i) => {
-    if (i > 0) overlay.appendChild(document.createTextNode(", "));
+  spans.forEach((s) => {
+    if (s.sepBefore) overlay.appendChild(document.createTextNode(s.sepBefore));
     overlay.appendChild(el("span", { class: s.cls, text: s.text }));
   });
   return overlay;
@@ -994,7 +1031,12 @@ async function render(isPoll = false) {
   if (focusId !== "new" && (!focusId || !allNodes.some((n) => n.id === focusId))) {
     focusId = allNodes.length ? allNodes[0].id : "new";
   }
-  if (focusId !== "new") markNodeViewed(focusId);
+  if (focusId !== "new") {
+    // pending means there's nothing to look at yet -- don't mark "read"
+    // until the generation actually finishes (or fails)
+    const focusedNode = allNodes.find((n) => n.id === focusId);
+    if (focusedNode && focusedNode.status !== "pending") markNodeViewed(focusId);
+  }
 
   const wrap = el("div", { class: "studio" });
   const browserPanel = buildBrowserPanel(allNodes, focusId);
