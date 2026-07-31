@@ -9,6 +9,9 @@ triaged and implemented when you say so (e.g. "process the inbox").
 
 ## Pending
 
+- edits to (negative) prompt should be sticky per tab and focus image. so if i make an edit to the prompt for one image, then switch to a different thumbnail, then come back, it hasn't forgotten the edits i made.
+
+
 ## Done
 
 - let's get rid of the preview image when hovering over a thumbnail. but we should still show the mutation. (thumbnail-grid hover now shows only the mutation caption, no enlarged image; breadcrumb hover unchanged)
