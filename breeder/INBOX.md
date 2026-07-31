@@ -11,6 +11,7 @@ triaged and implemented when you say so (e.g. "process the inbox").
 
 - edits to (negative) prompt should be sticky per tab and focus image. so if i make an edit to the prompt for one image, then switch to a different thumbnail, then come back, it hasn't forgotten the edits i made.
 - reduce the frequency of the mutator which toggles aspect ratio. it should still happen, but rarely.
+- problems with automatic scrolling of view of thumb browser. for one, if there is a generation ongoing, the scroll keeps getting overridden when you're trying to change it. for another, it is too insistent -- uh i don't know how to describe it.
 
 
 ## Done
