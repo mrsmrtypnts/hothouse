@@ -35,13 +35,15 @@ git config user.email "310750161+mrsmrtypnts@users.noreply.github.com"
 git add breeder/INBOX.md
 
 if git diff --cached --quiet -- breeder/INBOX.md; then
-    echo "sync-breeder-inbox: no INBOX.md changes to commit" >&2
-    exit 0
+    echo "sync-breeder-inbox: no staged INBOX.md changes to commit" >&2
+else
+    msg="${*:-INBOX update}"
+    git commit -m "INBOX: $msg"
 fi
 
-msg="${*:-INBOX update}"
-git commit -m "INBOX: $msg"
-
+# Always attempt the push, even if there was nothing new to commit above --
+# there may be earlier local commits (e.g. from a manual conflict resolution)
+# still waiting to go out. A no-op push just prints "Everything up-to-date".
 if ! git push; then
     echo "sync-breeder-inbox: push rejected (remote has new commits) -- pulling and retrying" >&2
     git pull --no-edit
