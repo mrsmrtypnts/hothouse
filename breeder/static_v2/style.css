@@ -237,6 +237,12 @@ button:disabled { opacity: 0.5; cursor: default; }
 .detail-image {
   flex: 1 1 420px;
   min-width: 0;
+  border-radius: var(--radius);
+  transition: box-shadow 0.1s ease;
+}
+.detail-image.drop-target-active,
+.detail-form.drop-target-active {
+  box-shadow: 0 0 0 2px var(--accent-hover);
 }
 .detail-image img {
   max-width: 100%;

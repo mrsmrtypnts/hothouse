@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import io
+import json
 import os
 import secrets
 import threading
@@ -10,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image, PngImagePlugin
@@ -246,18 +247,27 @@ async def breed_roots(req: VariationsRequest):
 
 
 @app.post("/api/root/from-image")
-async def create_root_from_image(file: UploadFile = File(...)):
+async def create_root_from_image(file: UploadFile = File(...), spec: Optional[str] = Form(None)):
     image_bytes = await file.read()
-    try:
-        extracted = extract.extract_spec(image_bytes)
-    except ValueError as exc:
-        raise HTTPException(400, str(exc))
-    spec = mutate.ensure_concrete_seed({**DEFAULTS, **extracted})
+    if spec is not None:
+        # drag-and-drop onto the image area (as opposed to the spec/form area)
+        # adopts the image but keeps whatever spec the caller already had --
+        # the image's own metadata is deliberately not consulted here
+        try:
+            extracted = json.loads(spec)
+        except ValueError as exc:
+            raise HTTPException(400, f"invalid spec: {exc}")
+    else:
+        try:
+            extracted = extract.extract_spec(image_bytes)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+    effective_spec = mutate.ensure_concrete_seed({**DEFAULTS, **extracted})
     # "Denoising strength" only appears in metadata for img2img (or Hires Fix) jobs --
     # not a certain signal, but a reasonable default given img2img is the common case.
     inferred_mode = "img2img" if "denoising_strength" in extracted else "txt2img"
-    node = await store.create_node(spec, parent_id=None, render_mode=inferred_mode)
-    filename = file.filename if file.filename and "." in file.filename else _image_filename(node["id"], spec)
+    node = await store.create_node(effective_spec, parent_id=None, render_mode=inferred_mode)
+    filename = file.filename if file.filename and "." in file.filename else _image_filename(node["id"], effective_spec)
     (config.IMAGE_DIR / filename).write_bytes(image_bytes)
     await store.mark_done(node["id"], filename)
     return store.get(node["id"])

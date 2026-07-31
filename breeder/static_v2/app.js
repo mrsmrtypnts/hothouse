@@ -796,14 +796,71 @@ function newRootLink() {
   return link;
 }
 
-async function uploadRootImage(file) {
+async function uploadRootImage(file, spec) {
   const formData = new FormData();
   formData.append("file", file);
+  // omitted entirely -> server extracts the spec from the image's own
+  // metadata (plain Import); provided -> server keeps this spec as-is and
+  // just adopts the image itself (drag-and-drop onto the image area)
+  if (spec) formData.append("spec", JSON.stringify(spec));
   const res = await fetch("/api/root/from-image", { method: "POST", body: formData });
   if (!res.ok) {
     throw new Error((await res.text()) || `upload failed (${res.status})`);
   }
   return res.json();
+}
+
+// shared by both drop targets below -- highlights `target` while a file is
+// dragged over it, and hands the dropped file to `onDrop` (only the first
+// file if several are dropped)
+function wireImageDrop(target, onDrop) {
+  let dragDepth = 0;
+  target.addEventListener("dragenter", (e) => {
+    e.preventDefault();
+    dragDepth++;
+    target.classList.add("drop-target-active");
+  });
+  target.addEventListener("dragover", (e) => e.preventDefault());
+  target.addEventListener("dragleave", () => {
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (dragDepth === 0) target.classList.remove("drop-target-active");
+  });
+  target.addEventListener("drop", async (e) => {
+    e.preventDefault();
+    dragDepth = 0;
+    target.classList.remove("drop-target-active");
+    const file = e.dataTransfer.files && e.dataTransfer.files[0];
+    if (!file) return;
+    await onDrop(file);
+  });
+}
+
+// dropped onto the spec/form area: full import, same as the "Import..."
+// button -- both the image and its spec come from the dropped file
+function wireSpecAreaImageDrop(target) {
+  wireImageDrop(target, async (file) => {
+    try {
+      const node = await uploadRootImage(file);
+      navigate(node.id);
+    } catch (err) {
+      alert(`Import failed: ${err.message}`);
+    }
+  });
+}
+
+// dropped onto the image area: the image is adopted, but the current spec
+// is kept as-is -- geared towards then breeding img2img off the dropped
+// image, so default the mode toggle to img2img ahead of that
+function wireImageOnlyDrop(target) {
+  wireImageDrop(target, async (file) => {
+    try {
+      const node = await uploadRootImage(file, formSpec);
+      setMode("img2img");
+      navigate(node.id);
+    } catch (err) {
+      alert(`Import failed: ${err.message}`);
+    }
+  });
 }
 
 function importRootLink() {
@@ -1077,11 +1134,16 @@ async function buildDetailPanel(focusId, knownModels) {
     panel.appendChild(crumbBar);
 
     const main = el("div", { class: "detail-main" });
-    main.appendChild(el("div", { class: "placeholder", text: "not generated yet" }));
-    main.appendChild(buildForm(seedSpec, knownModels));
+    const imageBox = el("div", { class: "detail-image" });
+    imageBox.appendChild(el("div", { class: "placeholder", text: "not generated yet" }));
+    main.appendChild(imageBox);
+    const formEl = buildForm(seedSpec, knownModels);
+    main.appendChild(formEl);
     panel.appendChild(main);
     panel.appendChild(buildFreshBreedControls());
     wireFieldPromptShortcuts(panel);
+    wireImageOnlyDrop(imageBox);
+    wireSpecAreaImageDrop(formEl);
     return panel;
   }
 
@@ -1125,11 +1187,14 @@ async function buildDetailPanel(focusId, knownModels) {
   const rebuildForm = switchFormFocus(focusId);
   const parentNode = ancestors.length >= 2 ? ancestors[ancestors.length - 2] : null;
   const seedSpec = rebuildForm ? (savedFormSpecs.get(focusId) ?? node.spec) : formSpec;
-  main.appendChild(buildForm(seedSpec, knownModels, parentNode && parentNode.spec));
+  const formEl = buildForm(seedSpec, knownModels, parentNode && parentNode.spec);
+  main.appendChild(formEl);
   panel.appendChild(main);
 
   panel.appendChild(buildBreedControls(node));
   wireFieldPromptShortcuts(panel);
+  wireImageOnlyDrop(imageBox);
+  wireSpecAreaImageDrop(formEl);
 
   return panel;
 }
