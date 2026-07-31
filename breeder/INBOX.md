@@ -11,6 +11,7 @@ triaged and implemented when you say so (e.g. "process the inbox").
 
 - the slider for reroll prob doesn't go to the ends. if the number is 0%, it's not all the way at the left of the slider. conversely for 100%. it should go to the ends. (blocked on a product call: this is native `<input type=range>` behavior -- the thumb's center sits inset by half its own width at each end, by design, so making it flush requires replacing `accent-color` styling with a fully custom track/thumb, with real cross-browser quirk risk. Left alone rather than guess at a look you haven't signed off on.)
 - in the prompt and negative prompt boxes, color keywords to indicate what has changed relative to parent. white is unchanged, green is added, red is deleted (and so not actually present -- displayed only as a sort of ghost). for weight changes, green is increased and red is decreased. colors are shown initially, but if the user edits the field, they disappear.
+- add filtering controls for browser. one filter is to images which have been parents of another image. or grandparents. maybe it's a generalized filter on longest chain of descendants: 0 is never used, 1 is one child, 2 is one grandchild, and so on. another filter might be keywords in image spec
 
 ## Done
 
