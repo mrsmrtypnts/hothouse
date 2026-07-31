@@ -9,8 +9,6 @@ triaged and implemented when you say so (e.g. "process the inbox").
 
 ## Pending
 
-- when i click on the import button, nothing happens
-
 ## Done
 
 - let's get rid of the preview image when hovering over a thumbnail. but we should still show the mutation. (thumbnail-grid hover now shows only the mutation caption, no enlarged image; breadcrumb hover unchanged)
@@ -45,6 +43,7 @@ triaged and implemented when you say so (e.g. "process the inbox").
 - when you scroll in the thumb browser, the filtering controls should remain visible, not scroll out of sight. (`.filter-bar` is now `position: sticky` at the top of `.browser-panel`, with a matching background so thumbnails don't show through underneath it. Verified live: scrolled a 25-node test grid, filter bar stayed pinned with no gap/overlap)
 - [PY] certain mutations reliably lead to failures, e.g. by invoking a lora that's not available. figure out a way to: (1) learn from experience which loras reliably lead to generation errors, (2) figure out a good way to persist that knowledge in private storage -- not via the repo, (3) use that knowledge to suppress mutations which invoke unavailabke loras. (new `reliability.py` module, backed by `lora_health.json` in the private data dir -- kept separate from `corpus.json` so a corpus rescan can't wipe out live-learned data. Every render's outcome is recorded via `server.py`'s success/error paths; a failure only counts against a specific lora if the API's error message actually names it, so one broken lora can't drag down others it happens to get randomly paired with. Once a lora has ≥3 attempts and a ≥50% attributable failure rate, `mutate.py`'s `_add_learned_lora` stops proposing it -- loras already inherited from a parent are left alone. Added a read-only `/api/lora-health` endpoint to see what's been flagged and why. Verified with direct unit tests: a lora blamed by name in 3/3 errors got flagged and fully suppressed from 30 mutation picks in a row, while an unrelated lora with no attributable failures was unaffected. **This one needs a server restart on the other machine** -- touches `reliability.py`, `mutate.py`, `server.py`, `config.py`.)
 - if a generation is ongoing, the text box keeps resetting, overriding any modifications the user has made to content or box size. (verified live that prompt *content* actually survives a poll-triggered rebuild already, via the existing sticky-edit mechanism -- the real, reproducible part was box *size*: dragging a textarea taller sets an inline height that a DOM rebuild has no way to know about, so every poll tick silently snapped it back to the CSS default. Same render() gotcha as the scroll-position and focus-loss bugs before it. Now captures each prompt field's inline height before rebuilding and reapplies it after)
+- when i click on the import button, nothing happens (real bug -- the "+ New"/"Import..." buttons were only ever rendered for an existing node's breadcrumb bar; `buildDetailPanel`'s "+ New" screen branch returned early before that code ever ran, so the buttons silently didn't exist on the one screen you'd most want "Import" from. Verified live: clicking Import on the "+ New" screen now correctly triggers the hidden file input, same as it already did on a real node's screen)
 
 ## Won't fix
 

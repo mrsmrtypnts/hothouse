@@ -1064,6 +1064,18 @@ async function buildDetailPanel(focusId, knownModels) {
     const rebuildForm = switchFormFocus("new");
     const seedSpec = rebuildForm ? (savedFormSpecs.get("new") ?? await api.get("/api/defaults")) : formSpec;
 
+    // no ancestors to show, but the "+ New"/"Import..." actions still need to
+    // be reachable here -- this is exactly the screen where "Import" instead
+    // of typing from scratch is most likely wanted (this is what the "nothing
+    // happens" INBOX report turned out to be: these buttons simply weren't
+    // rendered at all on the "+ New" screen, an early-return oversight)
+    const crumbBar = breadcrumbs([]);
+    const crumbActions = el("div", { class: "crumb-actions" });
+    crumbActions.appendChild(newRootLink());
+    crumbActions.appendChild(importRootLink());
+    crumbBar.appendChild(crumbActions);
+    panel.appendChild(crumbBar);
+
     const main = el("div", { class: "detail-main" });
     main.appendChild(el("div", { class: "placeholder", text: "not generated yet" }));
     main.appendChild(buildForm(seedSpec, knownModels));
