@@ -12,6 +12,7 @@ triaged and implemented when you say so (e.g. "process the inbox").
 - in the prompt fields, newlines should be respected, preserved, displayed. loras should always be listed last, and always just one per line, inserting newlines between if needed. (partially addressed -- the diff overlay now preserves real newlines in its display, see Done below. The bigger ask, auto-sorting loras to the end, is still unaddressed: needs a design pass on exactly when/how re-sorting kicks in before implementing, rather than guessing)
 - if the main image is not wide enough to fill the space available, it should be centered in the space available, not left-aligned in that space.
 - not sure the keyword filter is working -- please double check
+- the keyword filter box should have an x affordance at the right end to clear the current query
 
 ## Done
 
