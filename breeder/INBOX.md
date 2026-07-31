@@ -9,6 +9,8 @@ triaged and implemented when you say so (e.g. "process the inbox").
 
 ## Pending
 
+- when the breadcrumb trail is very long it must be abbreviated. show the prefix and suffix but elide the middle. otherwise the "import" and "new" buttons get pushed off to the right.
+
 ## Done
 
 - let's get rid of the preview image when hovering over a thumbnail. but we should still show the mutation. (thumbnail-grid hover now shows only the mutation caption, no enlarged image; breadcrumb hover unchanged)
