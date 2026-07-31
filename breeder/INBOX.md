@@ -9,6 +9,8 @@ triaged and implemented when you say so (e.g. "process the inbox").
 
 ## Pending
 
+- if a generation is ongoing, the text box keeps resetting, overriding any modifications the user has made to content or box size.
+
 ## Done
 
 - let's get rid of the preview image when hovering over a thumbnail. but we should still show the mutation. (thumbnail-grid hover now shows only the mutation caption, no enlarged image; breadcrumb hover unchanged)
