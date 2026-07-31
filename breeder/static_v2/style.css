@@ -159,7 +159,8 @@ button:disabled { opacity: 0.5; cursor: default; }
 }
 
 .crumbs { display: flex; align-items: center; gap: 4px; margin-bottom: 20px; font-size: 14px; color: var(--text-dim); }
-.new-root-link { margin-left: auto; font-size: 12px; padding: 5px 10px; }
+.crumb-actions { margin-left: auto; display: flex; gap: 6px; }
+.new-root-link { font-size: 12px; padding: 5px 10px; }
 .crumb-sep { margin: 0 2px; font-size: 16px; font-weight: 600; }
 .crumb-sep:last-child { display: none; }
 .crumb-thumb, .crumb-pending {
@@ -201,7 +202,7 @@ button:disabled { opacity: 0.5; cursor: default; }
 }
 
 .mutation-label {
-  margin: -8px 0 20px;
+  margin: 0 0 20px;
   font-size: 14px;
   color: var(--text-dim);
 }

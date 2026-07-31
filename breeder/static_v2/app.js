@@ -177,10 +177,10 @@ function positionHoverPanel(panel, anchorEl) {
   panel.style.top = `${top}px`;
 }
 
-function showHoverPreview(node, anchorEl, caption) {
+function showHoverPreview(node, anchorEl, caption, showImage = true) {
   hideHoverPreview();
   const panel = el("div", { class: "hover-preview" });
-  if (node.status === "done" && node.image_file) {
+  if (showImage && node.status === "done" && node.image_file) {
     const img = el("img", { src: `/images/${node.image_file}`, alt: node.spec.prompt || node.id });
     img.addEventListener("load", () => {
       if (hoverEl === panel) positionHoverPanel(panel, anchorEl);
@@ -196,6 +196,7 @@ function showHoverPreview(node, anchorEl, caption) {
   if (text) {
     panel.appendChild(el("div", { class: "hover-caption", text }));
   }
+  if (!panel.hasChildNodes()) return;
   document.body.appendChild(panel);
   hoverEl = panel;
 
@@ -218,7 +219,9 @@ function thumbCard(node, selected) {
 
   if (node.status === "done") {
     const img = el("img", { src: `/images/${node.image_file}`, alt: node.spec.prompt || node.id });
-    img.addEventListener("mouseenter", () => showHoverPreview(node, img));
+    // no enlarged preview on hover here (that's what the focused-node view is
+    // for) -- just the mutation caption, if this node has one
+    img.addEventListener("mouseenter", () => showHoverPreview(node, img, undefined, false));
     img.addEventListener("mouseleave", hideHoverPreview);
     card.appendChild(img);
   } else if (node.status === "error") {
@@ -565,13 +568,107 @@ function newRootLink() {
   return link;
 }
 
-function wireCmdEnterToBreed(panel) {
+async function uploadRootImage(file) {
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await fetch("/api/root/from-image", { method: "POST", body: formData });
+  if (!res.ok) {
+    throw new Error((await res.text()) || `upload failed (${res.status})`);
+  }
+  return res.json();
+}
+
+function importRootLink() {
+  const wrap = el("span", {});
+  const input = el("input", { type: "file", accept: "image/png" });
+  input.style.display = "none";
+  const link = el("button", { class: "new-root-link", text: "Import..." });
+  link.addEventListener("click", () => input.click());
+  input.addEventListener("change", async () => {
+    const file = input.files && input.files[0];
+    input.value = "";
+    if (!file) return;
+    link.disabled = true;
+    link.textContent = "Importing...";
+    try {
+      const node = await uploadRootImage(file);
+      navigate(node.id);
+    } catch (err) {
+      alert(`Import failed: ${err.message}`);
+    } finally {
+      link.disabled = false;
+      link.textContent = "Import...";
+    }
+  });
+  wrap.appendChild(link);
+  wrap.appendChild(input);
+  return wrap;
+}
+
+// mirrors promptsyntax.py's KEYWORD_WEIGHT_RE/LORA_RE and mutate.py's weight
+// bounds/step, so cmd-option-up/down nudges by the same amount the server's
+// own mutators would
+const KEYWORD_WEIGHT_RE = /^\(([^():]+):([0-9.]+)\)$/;
+const LORA_RE = /^<lora:([^:>]+):([0-9.]+)>$/;
+const KEYWORD_WEIGHT_BOUNDS = [0.3, 2.0];
+const LORA_WEIGHT_BOUNDS = [0.0, 1.5];
+const WEIGHT_STEP = 0.1;
+
+function clampWeight(value, [lo, hi]) {
+  return Math.round(Math.min(hi, Math.max(lo, value)) * 100) / 100;
+}
+
+// Finds the comma-delimited segment the cursor is in, parses it as a LoRA
+// tag / weighted keyword / plain keyword, nudges the weight by `delta`
+// (introducing explicit (name:weight) syntax if it wasn't there yet), and
+// splices the result back in -- e.g. "foo" -> "(foo:1.1)".
+function nudgeWeightAtCursor(textarea, delta) {
+  const text = textarea.value;
+  const pos = textarea.selectionStart;
+
+  const start = text.lastIndexOf(",", pos - 1) + 1;
+  let end = text.indexOf(",", pos);
+  if (end === -1) end = text.length;
+
+  const raw = text.slice(start, end);
+  const seg = raw.trim();
+  if (!seg) return false;
+  const segStart = start + (raw.length - raw.trimStart().length);
+  const segEnd = end - (raw.length - raw.trimEnd().length);
+
+  let name, weight, bounds, build;
+  let m = LORA_RE.exec(seg);
+  if (m) {
+    [name, weight] = [m[1].trim(), parseFloat(m[2])];
+    bounds = LORA_WEIGHT_BOUNDS;
+    build = (n, w) => `<lora:${n}:${w}>`;
+  } else {
+    m = KEYWORD_WEIGHT_RE.exec(seg);
+    [name, weight] = m ? [m[1].trim(), parseFloat(m[2])] : [seg, 1.0];
+    bounds = KEYWORD_WEIGHT_BOUNDS;
+    build = (n, w) => `(${n}:${w})`;
+  }
+
+  const replacement = build(name, clampWeight(weight + delta, bounds));
+  textarea.value = text.slice(0, segStart) + replacement + text.slice(segEnd);
+  textarea.setSelectionRange(segStart, segStart + replacement.length);
+  textarea.dispatchEvent(new Event("input", { bubbles: true }));
+  return true;
+}
+
+function wireFieldPromptShortcuts(panel) {
   panel.addEventListener("keydown", (e) => {
-    if (!(e.metaKey || e.ctrlKey) || e.key !== "Enter") return;
     if (!e.target.classList.contains("field-prompt")) return;
-    e.preventDefault();
-    const btn = panel.querySelector(".btn-breed");
-    if (btn && !btn.disabled) btn.click();
+    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+      e.preventDefault();
+      const btn = panel.querySelector(".btn-breed");
+      if (btn && !btn.disabled) btn.click();
+    } else if ((e.metaKey || e.ctrlKey) && e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+      const delta = e.key === "ArrowUp" ? WEIGHT_STEP : -WEIGHT_STEP;
+      if (nudgeWeightAtCursor(e.target, delta)) {
+        e.preventDefault();
+      }
+    }
   });
 }
 
@@ -588,7 +685,7 @@ async function buildDetailPanel(focusId, knownModels) {
     main.appendChild(buildForm(seedSpec, knownModels));
     panel.appendChild(main);
     panel.appendChild(buildFreshBreedControls());
-    wireCmdEnterToBreed(panel);
+    wireFieldPromptShortcuts(panel);
     return panel;
   }
 
@@ -598,7 +695,10 @@ async function buildDetailPanel(focusId, knownModels) {
   ]);
 
   const crumbBar = breadcrumbs(ancestors.slice(0, -1));
-  crumbBar.appendChild(newRootLink());
+  const crumbActions = el("div", { class: "crumb-actions" });
+  crumbActions.appendChild(newRootLink());
+  crumbActions.appendChild(importRootLink());
+  crumbBar.appendChild(crumbActions);
   panel.appendChild(crumbBar);
 
   if (node.label) {
@@ -632,7 +732,7 @@ async function buildDetailPanel(focusId, knownModels) {
   panel.appendChild(main);
 
   panel.appendChild(buildBreedControls(node));
-  wireCmdEnterToBreed(panel);
+  wireFieldPromptShortcuts(panel);
 
   return panel;
 }
