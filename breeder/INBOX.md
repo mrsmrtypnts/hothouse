@@ -12,6 +12,7 @@ triaged and implemented when you say so (e.g. "process the inbox").
 - edits to (negative) prompt should be sticky per tab and focus image. so if i make an edit to the prompt for one image, then switch to a different thumbnail, then come back, it hasn't forgotten the edits i made.
 - reduce the frequency of the mutator which toggles aspect ratio. it should still happen, but rarely.
 - problems with automatic scrolling of view of thumb browser. for one, if there is a generation ongoing, the scroll keeps getting overridden when you're trying to change it. for another, it is too insistent -- uh i don't know how to describe it.
+- certain mutations reliably lead to failures, e.g. by invoking a lora that's not available. figure out a way to: (1) learn from experience which loras reliably lead to generation errors, (2) figure out a good way to persist that knowledge in private storage -- not via the repo, (3) use that knowledge to suppress mutations which invoke unavailabke loras.
 
 
 ## Done
