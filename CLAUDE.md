@@ -50,7 +50,7 @@ Only changes to `breeder/*.py` (`server.py`, `config.py`, `store.py`, `mutate.py
 
 # breeder/INBOX.md
 
-A running backlog of end-user feedback (fixes, improvements) for breeder, appended to by hand from real usage of the app. Treat `## Pending` items as a queue to triage, not free-form notes to edit. When processing an item: implement it if it's straightforward, then move its line to `## Done` with a short note of what changed. Leave ambiguous or oversized items in `## Pending` with a one-line comment explaining what's blocking it, rather than guessing. Commit any resulting fixes locally — never push as part of this processing; pushing still requires the explicit confirmation described above.
+A running backlog of end-user feedback (fixes, improvements) for breeder, appended to by hand from real usage of the app. Treat `## Pending` items as a queue to triage, not free-form notes to edit. When processing an item: implement it if it's straightforward, then move its line to `## Done` with a short note of what changed. Leave ambiguous or oversized items in `## Pending` with a one-line comment explaining what's blocking it, rather than guessing. If an item is deliberately decided against (not ambiguous, just not worth doing), move it to `## Won't fix` with a short note of the reasoning — that's a different resolution than `## Done`, which implies something actually changed. Commit any resulting fixes locally — never push as part of this processing; pushing still requires the explicit confirmation described above.
 
 # Concurrent sessions may be working on this repo
 
