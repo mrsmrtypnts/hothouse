@@ -7,6 +7,10 @@ elaborate, one line is usually enough.
 Nothing here gets acted on automatically. Add to it freely; things only get
 triaged and implemented when you say so (e.g. "process the inbox").
 
+## Urgent
+
+- something went wrong in recent commit. now i can't click in to prompt text boxes at all.
+
 ## Pending
 
 - when i make the browser window bigger, what should expand is the main image, the focused image. right now what expands is the prompt text box and the stuff underneath it. keep that fixed and expand the image instead.
