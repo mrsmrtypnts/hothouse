@@ -10,6 +10,7 @@ triaged and implemented when you say so (e.g. "process the inbox").
 ## Pending
 
 - edits to (negative) prompt should be sticky per tab and focus image. so if i make an edit to the prompt for one image, then switch to a different thumbnail, then come back, it hasn't forgotten the edits i made.
+- reduce the frequency of the mutator which toggles aspect ratio. it should still happen, but rarely.
 
 
 ## Done
