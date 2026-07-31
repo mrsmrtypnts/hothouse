@@ -609,7 +609,7 @@ function buildForm(spec, knownModels, parentSpec) {
     () => promptDiffDismissed, () => { promptDiffDismissed = true; }
   )));
 
-  const negInput = el("textarea", { class: "field-prompt" });
+  const negInput = el("textarea", { class: "field-prompt field-prompt-neg" });
   negInput.value = formSpec.negative_prompt || "";
   negInput.addEventListener("input", () => { formSpec.negative_prompt = negInput.value; });
   form.appendChild(fieldRow("Negative prompt", wrapFieldWithDiff(
@@ -1152,6 +1152,11 @@ async function render(isPoll = false) {
   // explicitly scroll anywhere -- same render() gotcha as the focus-loss
   // bug, just for scroll instead. Capture it now, restore it below.
   const prevScrollTop = document.querySelector(".browser-panel")?.scrollTop ?? 0;
+  // same DOM-rebuild gotcha, this time for a manually-resized prompt textarea:
+  // its height lives only in an inline style the browser sets on drag, so a
+  // rebuild silently drops it back to the CSS default. Carry it over by hand.
+  const prevPromptHeight = document.querySelector(".field-prompt-main")?.style.height || null;
+  const prevNegHeight = document.querySelector(".field-prompt-neg")?.style.height || null;
   const [allNodes, knownModels] = await Promise.all([
     api.get("/api/nodes"),
     api.get("/api/models"),
@@ -1174,6 +1179,14 @@ async function render(isPoll = false) {
   wrap.appendChild(buildSplitter(browserPanel));
   wrap.appendChild(await buildDetailPanel(focusId, knownModels));
   root.replaceChildren(wrap);
+  if (prevPromptHeight) {
+    const promptEl = wrap.querySelector(".field-prompt-main");
+    if (promptEl) promptEl.style.height = prevPromptHeight;
+  }
+  if (prevNegHeight) {
+    const negEl = wrap.querySelector(".field-prompt-neg");
+    if (negEl) negEl.style.height = prevNegHeight;
+  }
 
   // only scroll the selection into view when arrow-key navigation asked for
   // it (see the keydown handler below) -- doing this on every render was too
