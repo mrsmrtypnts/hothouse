@@ -9,11 +9,7 @@ triaged and implemented when you say so (e.g. "process the inbox").
 
 ## Pending
 
-- when i make the browser window bigger, what should expand is the main image, the focused image. right now what expands is the prompt text box and the stuff underneath it. keep that fixed and expand the image instead.
-- the outline on the selected thumb in the browser needs to be more visible
-- it would be cool if there were a visual distinction between "opened" (viewed) and "unopened" (not yet viewed) thumbs, kind of like in an email inbox. so that you can see which thumbs you've already viewed and which you still have yet to look at. not sure of best visual design.
-- cmd-enter to trigger breeding should work even if i'm not in the text box
-- when i use the arrow keys to navigate in the thumb browser, if i keep going down the selected thumb is no longer visible. the view should scroll down so that the selected thumb is always visible.
+- in the prompt fields, newlines should be respected, preserved, displayed. loras should always be listed last, and always just one per line, inserting newlines between if needed. (bigger than a quick fix: the existing weight-nudge/diff-overlay code splits prompts on commas only, and this wants newlines to be meaningful too, plus an auto-reordering rule -- needs a design pass on exactly when/how re-sorting kicks in before implementing, rather than guessing)
 
 ## Done
 
@@ -23,6 +19,12 @@ triaged and implemented when you say so (e.g. "process the inbox").
 - in the prompt (and negative prompt) inboxes, i should be able to use cmd-option-up and cmd-option-down to change the strength of keywords and loras, like from "foo" to "(foo:1.1)" and so on (implemented, mirroring mutate.py's weight bounds/step)
 - in the prompt and negative prompt boxes, color keywords to indicate what has changed relative to parent. white is unchanged, green is added, red is deleted (and so not actually present -- displayed only as a sort of ghost). for weight changes, green is increased and red is decreased. colors are shown initially, but if the user edits the field, they disappear. (implemented as an opaque overlay showing the diff, incl. ghost-removed segments via an LCS-based diff; disappears on first edit rather than trying to keep an editable textarea in sync with ghost text)
 - add filtering controls for browser. one filter is to images which have been parents of another image. or grandparents. maybe it's a generalized filter on longest chain of descendants: 0 is never used, 1 is one child, 2 is one grandchild, and so on. another filter might be keywords in image spec (added a filter bar above the thumbnail grid: min descendant-depth dropdown + keyword search over prompt/negative_prompt; filters the grid in place without a full re-render)
+- when i make the browser window bigger, what should expand is the main image, the focused image. right now what expands is the prompt text box and the stuff underneath it. keep that fixed and expand the image instead. (`.detail-image` now flex-grows to fill available space, `.detail-form` has a fixed flex-basis instead of flex:1)
+- the outline on the selected thumb in the browser needs to be more visible (thicker border in a brighter accent color, plus an outer glow ring)
+- it would be cool if there were a visual distinction between "opened" (viewed) and "unopened" (not yet viewed) thumbs, kind of like in an email inbox. so that you can see which thumbs you've already viewed and which you still have yet to look at. not sure of best visual design. (small unread-dot badge on unviewed thumbnails, cleared once you focus that node; tracked in localStorage so it persists across sessions)
+- cmd-enter to trigger breeding should work even if i'm not in the text box (the shortcut now fires from anywhere in the detail panel, not just the prompt/negative-prompt fields)
+- when i use the arrow keys to navigate in the thumb browser, if i keep going down the selected thumb is no longer visible. the view should scroll down so that the selected thumb is always visible. (scrollIntoView after every render, not just keyboard nav)
+- the filter controls have the same problem we've seen with other ui elements in the past: they keep losing focus if generations are in process. (real regression -- the poll-skip guard only checked focus inside .detail-panel, not .browser-panel where the filter inputs live; broadened the check to cover both)
 
 ## Won't fix
 

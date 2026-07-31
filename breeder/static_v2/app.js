@@ -209,8 +209,29 @@ function showHoverPreview(node, anchorEl, caption, showImage = true) {
   positionHoverPanel(panel, anchorEl);
 }
 
-function thumbCard(node, selected) {
+// which node ids have ever been focused -- persisted in localStorage (not
+// sessionStorage) since "have I looked at this before" should survive across
+// tabs/sessions, like read/unread in an email client
+function getViewedNodeIds() {
+  try {
+    return new Set(JSON.parse(localStorage.getItem("breederV2ViewedNodes") || "[]"));
+  } catch {
+    return new Set();
+  }
+}
+function markNodeViewed(id) {
+  const viewed = getViewedNodeIds();
+  if (viewed.has(id)) return;
+  viewed.add(id);
+  localStorage.setItem("breederV2ViewedNodes", JSON.stringify([...viewed]));
+}
+
+function thumbCard(node, selected, viewedIds) {
   const card = el("div", { class: `thumb-card${selected ? " selected" : ""}` });
+
+  if (!viewedIds.has(node.id)) {
+    card.appendChild(el("div", { class: "unread-dot" }));
+  }
 
   if (node.status !== "pending") {
     const delBtn = el("button", { class: "delete-x", text: "×" });
@@ -300,6 +321,7 @@ function buildBrowserPanel(allNodes, focusId) {
   panel.appendChild(el("h2", { text: "Breeder Studio" }));
 
   const depths = computeDescendantDepths(allNodes);
+  const viewedIds = getViewedNodeIds();
   const grid = el("div", { class: "thumb-grid" });
 
   function renderGrid() {
@@ -309,7 +331,7 @@ function buildBrowserPanel(allNodes, focusId) {
     for (const node of allNodes) {
       if (minDepth > 0 && (depths.get(node.id) || 0) < minDepth) continue;
       if (!nodeMatchesKeyword(node, keyword)) continue;
-      grid.appendChild(thumbCard(node, node.id === focusId));
+      grid.appendChild(thumbCard(node, node.id === focusId, viewedIds));
     }
   }
 
@@ -524,7 +546,7 @@ function setRerollPct(pct) {
 }
 function getMutationStrength() {
   const stored = parseFloat(sessionStorage.getItem("breederV2MutationStrength"));
-  return isNaN(stored) ? 1 : stored;
+  return isNaN(stored) ? 3 : stored;
 }
 function setMutationStrength(v) {
   sessionStorage.setItem("breederV2MutationStrength", String(v));
@@ -844,12 +866,16 @@ function wrapFieldWithDiff(inputEl, parentText, currentText, isDismissed, dismis
 
 function wireFieldPromptShortcuts(panel) {
   panel.addEventListener("keydown", (e) => {
-    if (!e.target.classList.contains("field-prompt")) return;
+    // cmd/ctrl+enter breeds from anywhere in the panel, not just the prompt
+    // fields -- e.g. focus in the seed field or model dropdown still works
     if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
       e.preventDefault();
       const btn = panel.querySelector(".btn-breed");
       if (btn && !btn.disabled) btn.click();
-    } else if ((e.metaKey || e.ctrlKey) && e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+      return;
+    }
+    if (!e.target.classList.contains("field-prompt")) return;
+    if ((e.metaKey || e.ctrlKey) && e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
       const delta = e.key === "ArrowUp" ? WEIGHT_STEP : -WEIGHT_STEP;
       if (nudgeWeightAtCursor(e.target, delta)) {
         e.preventDefault();
@@ -928,9 +954,12 @@ async function buildDetailPanel(focusId, knownModels) {
   return panel;
 }
 
-function isEditingDetailPanel() {
+// true while focus is anywhere a poll-triggered rebuild would yank it out
+// from under the user -- the detail form fields, but also the browser
+// panel's filter inputs (same failure mode, see the render() gotcha below)
+function isEditingUI() {
   const active = document.activeElement;
-  return !!(active && active.closest && active.closest(".detail-panel"));
+  return !!(active && active.closest && (active.closest(".detail-panel") || active.closest(".browser-panel")));
 }
 
 async function render(isPoll = false) {
@@ -940,7 +969,7 @@ async function render(isPoll = false) {
     setTimeout(() => render(isPoll), 100);
     return;
   }
-  if (isPoll && isEditingDetailPanel()) {
+  if (isPoll && isEditingUI()) {
     // a poll tick fired while the user has an active edit in the form --
     // rebuilding the DOM now would yank focus out from under them (this is
     // what made the prompt box "keep losing focus" while anything was
@@ -959,6 +988,7 @@ async function render(isPoll = false) {
   if (focusId !== "new" && (!focusId || !allNodes.some((n) => n.id === focusId))) {
     focusId = allNodes.length ? allNodes[0].id : "new";
   }
+  if (focusId !== "new") markNodeViewed(focusId);
 
   const wrap = el("div", { class: "studio" });
   const browserPanel = buildBrowserPanel(allNodes, focusId);
@@ -967,6 +997,12 @@ async function render(isPoll = false) {
   wrap.appendChild(buildSplitter(browserPanel));
   wrap.appendChild(await buildDetailPanel(focusId, knownModels));
   root.replaceChildren(wrap);
+
+  // keep the selected thumbnail in view, e.g. when arrow-key navigation moves
+  // focus off the bottom/top of the currently-scrolled grid -- "nearest" is a
+  // no-op if it's already visible, so this doesn't fight normal scrolling
+  const selectedCard = browserPanel.querySelector(".thumb-card.selected");
+  if (selectedCard) selectedCard.scrollIntoView({ block: "nearest" });
 
   if (allNodes.some((n) => n.status === "pending")) {
     pollTimer = setTimeout(() => render(true), 1500);
