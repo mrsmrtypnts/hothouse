@@ -17,6 +17,7 @@ triaged and implemented when you say so (e.g. "process the inbox").
 - when i right-click on a thumbnail (in the browser or in the breadcrumbs), there should be an option to open in a new tab, which opens the breeder studio with that image focused. not just open image in new tab, but open in new tab.
 - arrow navigation doesn't work properly in filtered views. the selection visits items that aren't even visible.
 - when i click into a text box, the pixel positions of words change, and sometimes even the line breaks change, i presume because the font size or spacing has changed.
+- cmd-opt-up and cmd-option-dn are not working to change strength on keywords. what it does properly: from cursor at point within keyword, expands selection to full keyword. what it does not do properly: changes strength of keyword.
 
 ## Done
 
