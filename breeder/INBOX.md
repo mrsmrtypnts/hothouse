@@ -13,6 +13,7 @@ triaged and implemented when you say so (e.g. "process the inbox").
 - if the main image is not wide enough to fill the space available, it should be centered in the space available, not left-aligned in that space.
 - not sure the keyword filter is working -- please double check
 - the keyword filter box should have an x affordance at the right end to clear the current query
+- seems like cmd-enter still does not trigger breed when i'm not in a text box
 
 ## Done
 
