@@ -86,6 +86,18 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
+// document-wide, not scoped to the detail panel, so it works regardless of
+// what currently has focus (a form field, the browser panel's filter inputs,
+// or nothing at all) -- there's only ever one .btn-breed on screen at a time
+document.addEventListener("keydown", (e) => {
+  if (!(e.metaKey || e.ctrlKey) || e.key !== "Enter") return;
+  const btn = document.querySelector(".btn-breed");
+  if (btn && !btn.disabled) {
+    e.preventDefault();
+    btn.click();
+  }
+});
+
 // 560px fits exactly 4 thumbnails across by default, given .thumb-grid's
 // minmax(110px, 1fr) columns, a 10px gap, and 20px panel padding on each side
 const DEFAULT_BROWSER_WIDTH = 560;
@@ -339,12 +351,29 @@ function buildBrowserPanel(allNodes, focusId) {
   // full render(), which would tear down these very inputs mid-keystroke
   // (see the render() gotcha noted elsewhere in this file)
   const filterBar = el("div", { class: "filter-bar" });
+  const keywordWrap = el("div", { class: "keyword-filter-wrap" });
   const keywordInput = el("input", { type: "text", placeholder: "filter by keyword..." });
   keywordInput.value = getKeywordFilter();
+  const keywordClear = el("button", { type: "button", class: "keyword-filter-clear", text: "×" });
+  keywordClear.title = "clear filter";
+  function updateKeywordClearVisibility() {
+    keywordClear.style.display = keywordInput.value ? "" : "none";
+  }
   keywordInput.addEventListener("input", () => {
     setKeywordFilter(keywordInput.value);
+    updateKeywordClearVisibility();
     renderGrid();
   });
+  keywordClear.addEventListener("click", () => {
+    keywordInput.value = "";
+    setKeywordFilter("");
+    updateKeywordClearVisibility();
+    renderGrid();
+    keywordInput.focus();
+  });
+  updateKeywordClearVisibility();
+  keywordWrap.appendChild(keywordInput);
+  keywordWrap.appendChild(keywordClear);
 
   const depthSelect = el("select");
   depthSelect.appendChild(el("option", { value: "0", text: "any depth" }));
@@ -357,7 +386,7 @@ function buildBrowserPanel(allNodes, focusId) {
     renderGrid();
   });
 
-  filterBar.appendChild(keywordInput);
+  filterBar.appendChild(keywordWrap);
   filterBar.appendChild(depthSelect);
   panel.appendChild(filterBar);
 
@@ -909,14 +938,6 @@ function wrapFieldWithDiff(inputEl, parentText, currentText, isDismissed, dismis
 
 function wireFieldPromptShortcuts(panel) {
   panel.addEventListener("keydown", (e) => {
-    // cmd/ctrl+enter breeds from anywhere in the panel, not just the prompt
-    // fields -- e.g. focus in the seed field or model dropdown still works
-    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
-      e.preventDefault();
-      const btn = panel.querySelector(".btn-breed");
-      if (btn && !btn.disabled) btn.click();
-      return;
-    }
     if (!e.target.classList.contains("field-prompt")) return;
     if ((e.metaKey || e.ctrlKey) && e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
       const delta = e.key === "ArrowUp" ? WEIGHT_STEP : -WEIGHT_STEP;

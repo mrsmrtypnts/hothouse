@@ -10,6 +10,7 @@ triaged and implemented when you say so (e.g. "process the inbox").
 ## Pending
 
 - in the prompt fields, newlines should be respected, preserved, displayed. loras should always be listed last, and always just one per line, inserting newlines between if needed. (partially addressed -- the diff overlay now preserves real newlines in its display, see Done below. The bigger ask, auto-sorting loras to the end, is still unaddressed: needs a design pass on exactly when/how re-sorting kicks in before implementing, rather than guessing)
+
 ## Done
 
 - let's get rid of the preview image when hovering over a thumbnail. but we should still show the mutation. (thumbnail-grid hover now shows only the mutation caption, no enlarged image; breadcrumb hover unchanged)
@@ -29,6 +30,9 @@ triaged and implemented when you say so (e.g. "process the inbox").
 - the "read / unread" indicator should not toggle from unread to read if the generation hasn't yet completed. it can't be read until it's complete. (real bug -- render() marked the focused node viewed regardless of status; now skips marking while status is "pending")
 - it looks like newlines in the prompt are saved but not displayed in the prompt text box until the cursor enters it. like, the prompt has newlines in it, and once i click into the box, they become visible i..e. are used to make new lines. but before i click into the box they are not respected in the way the prompt is displayed. (real bug in the diff overlay -- it rebuilt segments with a flat ", " separator, discarding real newlines. Now captures and reuses the actual separator text between segments, so line breaks in the real value show up in the overlay too)
 - if the main image is not wide enough to fill the space available, it should be centered in the space available, not left-aligned in that space. (added `margin: 0 auto` to `.detail-image img`)
+- not sure the keyword filter is working -- please double check (re-verified live: typing filters correctly, clearing restores the full grid, and it survives a page reload. Couldn't find a bug -- spec is a required field on every node server-side so it can't be the null-spec issue I first suspected. If it's still acting up for you, let me know exactly what you typed and what you expected to see)
+- the keyword filter box should have an x affordance at the right end to clear the current query (added -- only visible when there's text in the box)
+- seems like cmd-enter still does not trigger breed when i'm not in a text box (real gap in the earlier fix -- it was scoped to keydowns inside .detail-panel, so focus in the browser panel's own filter inputs, or nothing focused at all, never reached it. Moved to a single document-wide listener, same pattern as the arrow-key thumbnail navigation)
 
 ## Won't fix
 
