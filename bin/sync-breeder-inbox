@@ -8,6 +8,25 @@ set -euo pipefail
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo"
 
+# Fail fast on missing/wrong credentials instead of hanging on an interactive
+# username/password prompt -- this is meant to be run without babysitting it.
+export GIT_TERMINAL_PROMPT=0
+
+cred_username="$(git credential fill <<<$'protocol=https\nhost=github.com' 2>/dev/null | sed -n 's/^username=//p')"
+if [ -z "$cred_username" ]; then
+    cat >&2 <<'MSG'
+sync-breeder-inbox: no stored GitHub credentials for github.com on this machine.
+One-time setup:
+  gh auth login
+  gh auth switch --hostname github.com --user mrsmrtypnts   # if other accounts are also logged in
+MSG
+    exit 1
+fi
+if [ "$cred_username" != "mrsmrtypnts" ]; then
+    echo "sync-breeder-inbox: active GitHub credentials are for '$cred_username', not mrsmrtypnts -- run: gh auth switch --hostname github.com --user mrsmrtypnts" >&2
+    exit 1
+fi
+
 # Every commit to this repo must carry this identity, regardless of which
 # machine or account runs this script -- see CLAUDE.md.
 git config user.name "mrsmrtypnts"
