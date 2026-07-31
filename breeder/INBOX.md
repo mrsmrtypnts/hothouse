@@ -9,6 +9,9 @@ triaged and implemented when you say so (e.g. "process the inbox").
 
 ## Pending
 
+- certain mutations reliably lead to failures, e.g. by invoking a lora that's not available. figure out a way to: (1) learn from experience which loras reliably lead to generation errors, (2) figure out a good way to persist that knowledge in private storage -- not via the repo, (3) use that knowledge to suppress mutations which invoke unavailabke loras.
+- when you scroll in the thumb browser, the filtering controls should remain visible, not scroll out of sight.
+
 ## Done
 
 - let's get rid of the preview image when hovering over a thumbnail. but we should still show the mutation. (thumbnail-grid hover now shows only the mutation caption, no enlarged image; breadcrumb hover unchanged)
