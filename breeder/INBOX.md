@@ -7,6 +7,10 @@ elaborate, one line is usually enough.
 Nothing here gets acted on automatically. Add to it freely; things only get
 triaged and implemented when you say so (e.g. "process the inbox").
 
+## Urgent
+
+- something went wrong in recent commit. now i can't click in to prompt text boxes at all.
+
 ## Pending
 
 - in the prompt fields, newlines should be respected, preserved, displayed. loras should always be listed last, and always just one per line, inserting newlines between if needed. (bigger than a quick fix: the existing weight-nudge/diff-overlay code splits prompts on commas only, and this wants newlines to be meaningful too, plus an auto-reordering rule -- needs a design pass on exactly when/how re-sorting kicks in before implementing, rather than guessing)
