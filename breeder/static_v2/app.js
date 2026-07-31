@@ -141,6 +141,12 @@ function buildSplitter(browserPanel) {
 let formSpec = null;
 let formFocusId = null;
 
+// whether the prompt/negative-prompt diff-vs-parent overlay has been
+// dismissed (by editing) for the current focus -- reset alongside formSpec
+// whenever focus actually changes, same lifecycle
+let promptDiffDismissed = false;
+let negPromptDiffDismissed = false;
+
 function getMode() {
   return sessionStorage.getItem("breederV2Mode") || "txt2img";
 }
@@ -244,13 +250,96 @@ function thumbCard(node, selected) {
   return card;
 }
 
+function getKeywordFilter() {
+  return sessionStorage.getItem("breederV2FilterKeyword") || "";
+}
+function setKeywordFilter(v) {
+  sessionStorage.setItem("breederV2FilterKeyword", v);
+}
+function getMinDescendantDepth() {
+  const stored = parseInt(sessionStorage.getItem("breederV2FilterMinDepth"), 10);
+  return isNaN(stored) ? 0 : stored;
+}
+function setMinDescendantDepth(v) {
+  sessionStorage.setItem("breederV2FilterMinDepth", String(v));
+}
+
+// depth 0 = no children (never bred further), 1 = has a child but no
+// grandchild, 2 = has a grandchild but no great-grandchild, and so on --
+// the longest chain of descendants below this node
+function computeDescendantDepths(allNodes) {
+  const childrenOf = new Map();
+  for (const n of allNodes) {
+    if (!n.parent_id) continue;
+    if (!childrenOf.has(n.parent_id)) childrenOf.set(n.parent_id, []);
+    childrenOf.get(n.parent_id).push(n);
+  }
+  const cache = new Map();
+  function depth(id) {
+    if (cache.has(id)) return cache.get(id);
+    const kids = childrenOf.get(id) || [];
+    const d = kids.length === 0 ? 0 : 1 + Math.max(...kids.map((k) => depth(k.id)));
+    cache.set(id, d);
+    return d;
+  }
+  const result = new Map();
+  for (const n of allNodes) result.set(n.id, depth(n.id));
+  return result;
+}
+
+function nodeMatchesKeyword(node, keyword) {
+  if (!keyword) return true;
+  const k = keyword.toLowerCase();
+  const prompt = (node.spec.prompt || "").toLowerCase();
+  const neg = (node.spec.negative_prompt || "").toLowerCase();
+  return prompt.includes(k) || neg.includes(k);
+}
+
 function buildBrowserPanel(allNodes, focusId) {
   const panel = el("div", { class: "browser-panel" });
   panel.appendChild(el("h2", { text: "Breeder Studio" }));
+
+  const depths = computeDescendantDepths(allNodes);
   const grid = el("div", { class: "thumb-grid" });
-  for (const node of allNodes) {
-    grid.appendChild(thumbCard(node, node.id === focusId));
+
+  function renderGrid() {
+    const keyword = keywordInput.value;
+    const minDepth = parseInt(depthSelect.value, 10) || 0;
+    grid.replaceChildren();
+    for (const node of allNodes) {
+      if (minDepth > 0 && (depths.get(node.id) || 0) < minDepth) continue;
+      if (!nodeMatchesKeyword(node, keyword)) continue;
+      grid.appendChild(thumbCard(node, node.id === focusId));
+    }
   }
+
+  // filtering only ever touches `grid`'s own children -- never triggers a
+  // full render(), which would tear down these very inputs mid-keystroke
+  // (see the render() gotcha noted elsewhere in this file)
+  const filterBar = el("div", { class: "filter-bar" });
+  const keywordInput = el("input", { type: "text", placeholder: "filter by keyword..." });
+  keywordInput.value = getKeywordFilter();
+  keywordInput.addEventListener("input", () => {
+    setKeywordFilter(keywordInput.value);
+    renderGrid();
+  });
+
+  const depthSelect = el("select");
+  depthSelect.appendChild(el("option", { value: "0", text: "any depth" }));
+  for (let i = 1; i <= 5; i++) {
+    depthSelect.appendChild(el("option", { value: String(i), text: `${i}+ descendants deep` }));
+  }
+  depthSelect.value = String(getMinDescendantDepth());
+  depthSelect.addEventListener("change", () => {
+    setMinDescendantDepth(parseInt(depthSelect.value, 10) || 0);
+    renderGrid();
+  });
+
+  filterBar.appendChild(keywordInput);
+  filterBar.appendChild(depthSelect);
+  panel.appendChild(filterBar);
+
+  renderGrid();
   panel.appendChild(grid);
   return panel;
 }
@@ -384,19 +473,25 @@ function buildModelField(form, models) {
   form.appendChild(wrap);
 }
 
-function buildForm(spec, knownModels) {
+function buildForm(spec, knownModels, parentSpec) {
   formSpec = { ...spec };
   const form = el("div", { class: "detail-form" });
 
   const promptInput = el("textarea", { class: "field-prompt field-prompt-main" });
   promptInput.value = formSpec.prompt || "";
   promptInput.addEventListener("input", () => { formSpec.prompt = promptInput.value; });
-  form.appendChild(fieldRow("Prompt", promptInput));
+  form.appendChild(fieldRow("Prompt", wrapFieldWithDiff(
+    promptInput, parentSpec && parentSpec.prompt, formSpec.prompt,
+    () => promptDiffDismissed, () => { promptDiffDismissed = true; }
+  )));
 
   const negInput = el("textarea", { class: "field-prompt" });
   negInput.value = formSpec.negative_prompt || "";
   negInput.addEventListener("input", () => { formSpec.negative_prompt = negInput.value; });
-  form.appendChild(fieldRow("Negative prompt", negInput));
+  form.appendChild(fieldRow("Negative prompt", wrapFieldWithDiff(
+    negInput, parentSpec && parentSpec.negative_prompt, formSpec.negative_prompt,
+    () => negPromptDiffDismissed, () => { negPromptDiffDismissed = true; }
+  )));
 
   buildModelField(form, knownModels);
 
@@ -618,6 +713,22 @@ function clampWeight(value, [lo, hi]) {
   return Math.round(Math.min(hi, Math.max(lo, value)) * 100) / 100;
 }
 
+// Parses a single (already-trimmed) comma-segment as a LoRA tag / weighted
+// keyword / plain keyword -- mirrors promptsyntax.py's parse_segment.
+function parseSegment(seg) {
+  let m = LORA_RE.exec(seg);
+  if (m) return { name: m[1].trim(), weight: parseFloat(m[2]), kind: "lora", bounds: LORA_WEIGHT_BOUNDS };
+  m = KEYWORD_WEIGHT_RE.exec(seg);
+  if (m) return { name: m[1].trim(), weight: parseFloat(m[2]), kind: "weighted", bounds: KEYWORD_WEIGHT_BOUNDS };
+  return { name: seg, weight: 1.0, kind: "plain", bounds: KEYWORD_WEIGHT_BOUNDS };
+}
+
+function buildSegmentText(seg) {
+  if (seg.kind === "lora") return `<lora:${seg.name}:${seg.weight}>`;
+  if (seg.kind === "weighted") return `(${seg.name}:${seg.weight})`;
+  return seg.name;
+}
+
 // Finds the comma-delimited segment the cursor is in, parses it as a LoRA
 // tag / weighted keyword / plain keyword, nudges the weight by `delta`
 // (introducing explicit (name:weight) syntax if it wasn't there yet), and
@@ -636,24 +747,99 @@ function nudgeWeightAtCursor(textarea, delta) {
   const segStart = start + (raw.length - raw.trimStart().length);
   const segEnd = end - (raw.length - raw.trimEnd().length);
 
-  let name, weight, bounds, build;
-  let m = LORA_RE.exec(seg);
-  if (m) {
-    [name, weight] = [m[1].trim(), parseFloat(m[2])];
-    bounds = LORA_WEIGHT_BOUNDS;
-    build = (n, w) => `<lora:${n}:${w}>`;
-  } else {
-    m = KEYWORD_WEIGHT_RE.exec(seg);
-    [name, weight] = m ? [m[1].trim(), parseFloat(m[2])] : [seg, 1.0];
-    bounds = KEYWORD_WEIGHT_BOUNDS;
-    build = (n, w) => `(${n}:${w})`;
-  }
-
-  const replacement = build(name, clampWeight(weight + delta, bounds));
+  const parsed = parseSegment(seg);
+  const replacement = buildSegmentText({ ...parsed, weight: clampWeight(parsed.weight + delta, parsed.bounds) });
   textarea.value = text.slice(0, segStart) + replacement + text.slice(segEnd);
   textarea.setSelectionRange(segStart, segStart + replacement.length);
   textarea.dispatchEvent(new Event("input", { bubbles: true }));
   return true;
+}
+
+function splitSegments(text) {
+  return (text || "").split(",").map((s) => s.trim()).filter(Boolean);
+}
+
+// classic LCS-based diff over segment names, so removed/added segments show
+// up in a sensible relative order rather than just "removed stuff at the end"
+function diffSegmentOps(parentNames, currentNames) {
+  const n = parentNames.length, m = currentNames.length;
+  const dp = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      dp[i][j] = parentNames[i] === currentNames[j]
+        ? dp[i + 1][j + 1] + 1
+        : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    }
+  }
+  const ops = [];
+  let i = 0, j = 0;
+  while (i < n && j < m) {
+    if (parentNames[i] === currentNames[j]) {
+      ops.push({ type: "same", pIdx: i, cIdx: j });
+      i++; j++;
+    } else if (dp[i + 1][j] >= dp[i][j + 1]) {
+      ops.push({ type: "remove", pIdx: i });
+      i++;
+    } else {
+      ops.push({ type: "add", cIdx: j });
+      j++;
+    }
+  }
+  while (i < n) { ops.push({ type: "remove", pIdx: i }); i++; }
+  while (j < m) { ops.push({ type: "add", cIdx: j }); j++; }
+  return ops;
+}
+
+// Builds {text, cls} spans diffing currentText against parentText: unchanged
+// segments in the default color, added segments green, removed segments a
+// faded/struck-through "ghost" (they're not actually in currentText), and
+// same-name segments whose weight changed colored by direction.
+function buildPromptDiffSpans(parentText, currentText) {
+  const parentSegs = splitSegments(parentText).map(parseSegment);
+  const currentSegs = splitSegments(currentText).map(parseSegment);
+  const ops = diffSegmentOps(parentSegs.map((s) => s.name), currentSegs.map((s) => s.name));
+
+  return ops.map((op) => {
+    if (op.type === "remove") {
+      return { text: buildSegmentText(parentSegs[op.pIdx]), cls: "diff-removed" };
+    }
+    if (op.type === "add") {
+      return { text: buildSegmentText(currentSegs[op.cIdx]), cls: "diff-added" };
+    }
+    const p = parentSegs[op.pIdx], c = currentSegs[op.cIdx];
+    let cls = "diff-unchanged";
+    if (p.weight !== c.weight) cls = p.weight < c.weight ? "diff-increased" : "diff-decreased";
+    return { text: buildSegmentText(c), cls };
+  });
+}
+
+function buildDiffOverlay(spans) {
+  const overlay = el("div", { class: "field-diff-overlay" });
+  spans.forEach((s, i) => {
+    if (i > 0) overlay.appendChild(document.createTextNode(", "));
+    overlay.appendChild(el("span", { class: s.cls, text: s.text }));
+  });
+  return overlay;
+}
+
+// Wraps a prompt/negative-prompt textarea with a diff overlay (shown until
+// the field is actually edited, per the field's own dismissed-flag) -- the
+// overlay is pointer-events:none and opaque, so clicks pass through to focus
+// the real (currently hidden-beneath-it) textarea, and the first edit removes
+// the overlay rather than trying to keep an editable textarea and a colored
+// ghost-inclusive overlay in character-for-character sync.
+function wrapFieldWithDiff(inputEl, parentText, currentText, isDismissed, dismiss) {
+  const wrap = el("div", { class: "field-prompt-wrap" });
+  wrap.appendChild(inputEl);
+  if (parentText != null && !isDismissed()) {
+    const overlay = buildDiffOverlay(buildPromptDiffSpans(parentText || "", currentText || ""));
+    wrap.appendChild(overlay);
+    inputEl.addEventListener("input", () => {
+      dismiss();
+      overlay.remove();
+    }, { once: true });
+  }
+  return wrap;
 }
 
 function wireFieldPromptShortcuts(panel) {
@@ -727,8 +913,13 @@ async function buildDetailPanel(focusId, knownModels) {
   main.appendChild(imageBox);
 
   const rebuildForm = focusId !== formFocusId;
-  if (rebuildForm) formFocusId = focusId;
-  main.appendChild(buildForm(rebuildForm ? node.spec : formSpec, knownModels));
+  if (rebuildForm) {
+    formFocusId = focusId;
+    promptDiffDismissed = false;
+    negPromptDiffDismissed = false;
+  }
+  const parentNode = ancestors.length >= 2 ? ancestors[ancestors.length - 2] : null;
+  main.appendChild(buildForm(rebuildForm ? node.spec : formSpec, knownModels, parentNode && parentNode.spec));
   panel.appendChild(main);
 
   panel.appendChild(buildBreedControls(node));

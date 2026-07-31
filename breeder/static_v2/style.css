@@ -69,6 +69,9 @@ button:disabled { opacity: 0.5; cursor: default; }
 }
 .splitter:hover, .splitter.dragging { background: var(--accent); }
 
+.filter-bar { display: flex; gap: 8px; margin-bottom: 14px; }
+.filter-bar input[type=text] { flex: 1; min-width: 0; }
+
 .thumb-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
@@ -235,6 +238,27 @@ button:disabled { opacity: 0.5; cursor: default; }
 .field-label { font-size: 12px; color: var(--text-dim); }
 .field-prompt { min-height: 60px; resize: vertical; width: 100%; }
 .field-prompt-main { min-height: 400px; }
+
+.field-prompt-wrap { position: relative; }
+.field-diff-overlay {
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  padding: 7px 10px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-family: inherit;
+  line-height: 1.5;
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow: auto;
+  pointer-events: none;
+}
+.diff-added, .diff-increased { color: #7ed992; }
+.diff-decreased { color: #d97a7a; }
+.diff-removed { color: #d97a7a; opacity: 0.6; text-decoration: line-through; }
 .field-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
