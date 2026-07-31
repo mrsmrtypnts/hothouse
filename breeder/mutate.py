@@ -206,7 +206,7 @@ MUTATOR_WEIGHTS = [
     (_nudge_cfg_scale, 0.4),
     (_nudge_steps, 0.4),
     (_swap_sampler, 0.4),
-    (_toggle_orientation, 0.4),
+    (_toggle_orientation, 0.05),  # jarring when it fires -- keep it rare
     (_add_canned_keyword, 0.3),
     (_nudge_keyword_weight, 1.0),
     (_nudge_lora_weight, 1.0),

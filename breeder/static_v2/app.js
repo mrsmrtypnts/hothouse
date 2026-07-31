@@ -58,6 +58,12 @@ function gridColumnCount(cards) {
   return count || 1;
 }
 
+// set right before navigate() from arrow-key nav specifically, and consumed
+// by the next render() -- so only a keyboard-driven jump scrolls the grid,
+// not every render (a poll tick firing every 1.5s while something's
+// generating must never fight the user's own scrolling)
+let scrollSelectedIntoView = false;
+
 // Reads ids straight from the currently-rendered .thumb-card elements
 // (which already reflect any active keyword/depth filter), rather than the
 // full unfiltered node list -- otherwise arrow-key navigation would jump to
@@ -83,6 +89,7 @@ document.addEventListener("keydown", (e) => {
 
   if (nextIdx !== idx) {
     e.preventDefault();
+    scrollSelectedIntoView = true;
     navigate(ids[nextIdx]);
   }
 });
@@ -159,6 +166,34 @@ let formFocusId = null;
 // whenever focus actually changes, same lifecycle
 let promptDiffDismissed = false;
 let negPromptDiffDismissed = false;
+
+// in-progress edits (and diff-dismissed state) for any focus *other than the
+// current one*, keyed by focus id ("new" is a valid key too) -- so switching
+// to a different thumbnail and back doesn't forget what you were typing.
+// Cleared on a full page reload by design; this is meant to survive
+// navigating around within the same tab, not persist indefinitely.
+const savedFormSpecs = new Map();
+const savedPromptDismissed = new Map();
+const savedNegPromptDismissed = new Map();
+
+// Call whenever the effective focus is about to change to `newFocusId`.
+// Stashes the outgoing focus's in-progress state (if any) and restores
+// whatever was previously saved for the incoming one. Returns true if focus
+// actually changed (i.e. the form needs rebuilding from some seed spec).
+function switchFormFocus(newFocusId) {
+  const changed = formFocusId !== newFocusId;
+  if (changed) {
+    if (formFocusId != null) {
+      savedFormSpecs.set(formFocusId, formSpec);
+      savedPromptDismissed.set(formFocusId, promptDiffDismissed);
+      savedNegPromptDismissed.set(formFocusId, negPromptDiffDismissed);
+    }
+    formFocusId = newFocusId;
+    promptDiffDismissed = savedPromptDismissed.get(newFocusId) || false;
+    negPromptDiffDismissed = savedNegPromptDismissed.get(newFocusId) || false;
+  }
+  return changed;
+}
 
 function getMode() {
   return sessionStorage.getItem("breederV2Mode") || "txt2img";
@@ -1026,9 +1061,8 @@ async function buildDetailPanel(focusId, knownModels) {
   const panel = el("div", { class: "detail-panel" });
 
   if (focusId === "new") {
-    const rebuildForm = formFocusId !== "new";
-    if (rebuildForm) formFocusId = "new";
-    const seedSpec = rebuildForm ? await api.get("/api/defaults") : formSpec;
+    const rebuildForm = switchFormFocus("new");
+    const seedSpec = rebuildForm ? (savedFormSpecs.get("new") ?? await api.get("/api/defaults")) : formSpec;
 
     const main = el("div", { class: "detail-main" });
     main.appendChild(el("div", { class: "placeholder", text: "not generated yet" }));
@@ -1076,14 +1110,10 @@ async function buildDetailPanel(focusId, knownModels) {
   }
   main.appendChild(imageBox);
 
-  const rebuildForm = focusId !== formFocusId;
-  if (rebuildForm) {
-    formFocusId = focusId;
-    promptDiffDismissed = false;
-    negPromptDiffDismissed = false;
-  }
+  const rebuildForm = switchFormFocus(focusId);
   const parentNode = ancestors.length >= 2 ? ancestors[ancestors.length - 2] : null;
-  main.appendChild(buildForm(rebuildForm ? node.spec : formSpec, knownModels, parentNode && parentNode.spec));
+  const seedSpec = rebuildForm ? (savedFormSpecs.get(focusId) ?? node.spec) : formSpec;
+  main.appendChild(buildForm(seedSpec, knownModels, parentNode && parentNode.spec));
   panel.appendChild(main);
 
   panel.appendChild(buildBreedControls(node));
@@ -1117,6 +1147,11 @@ async function render(isPoll = false) {
   }
 
   stopPolling();
+  // root.replaceChildren below rebuilds .browser-panel from scratch, which
+  // resets scroll position to 0 as a side effect regardless of whether we
+  // explicitly scroll anywhere -- same render() gotcha as the focus-loss
+  // bug, just for scroll instead. Capture it now, restore it below.
+  const prevScrollTop = document.querySelector(".browser-panel")?.scrollTop ?? 0;
   const [allNodes, knownModels] = await Promise.all([
     api.get("/api/nodes"),
     api.get("/api/models"),
@@ -1140,11 +1175,18 @@ async function render(isPoll = false) {
   wrap.appendChild(await buildDetailPanel(focusId, knownModels));
   root.replaceChildren(wrap);
 
-  // keep the selected thumbnail in view, e.g. when arrow-key navigation moves
-  // focus off the bottom/top of the currently-scrolled grid -- "nearest" is a
-  // no-op if it's already visible, so this doesn't fight normal scrolling
-  const selectedCard = browserPanel.querySelector(".thumb-card.selected");
-  if (selectedCard) selectedCard.scrollIntoView({ block: "nearest" });
+  // only scroll the selection into view when arrow-key navigation asked for
+  // it (see the keydown handler below) -- doing this on every render was too
+  // aggressive: a poll tick firing every 1.5s while something's generating
+  // kept snapping the grid back if you'd scrolled elsewhere to look around.
+  // Otherwise, restore wherever the user had actually scrolled to.
+  if (scrollSelectedIntoView) {
+    scrollSelectedIntoView = false;
+    const selectedCard = browserPanel.querySelector(".thumb-card.selected");
+    if (selectedCard) selectedCard.scrollIntoView({ block: "nearest" });
+  } else {
+    browserPanel.scrollTop = prevScrollTop;
+  }
 
   if (allNodes.some((n) => n.status === "pending")) {
     pollTimer = setTimeout(() => render(true), 1500);
