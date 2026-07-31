@@ -11,6 +11,7 @@ triaged and implemented when you say so (e.g. "process the inbox").
 
 - certain mutations reliably lead to failures, e.g. by invoking a lora that's not available. figure out a way to: (1) learn from experience which loras reliably lead to generation errors, (2) figure out a good way to persist that knowledge in private storage -- not via the repo, (3) use that knowledge to suppress mutations which invoke unavailabke loras.
 - when you scroll in the thumb browser, the filtering controls should remain visible, not scroll out of sight.
+- if a generation is ongoing, the text box keeps resetting, overriding any modifications the user has made to content or box size.
 
 ## Done
 
