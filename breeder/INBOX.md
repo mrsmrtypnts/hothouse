@@ -14,6 +14,7 @@ triaged and implemented when you say so (e.g. "process the inbox").
 - not sure the keyword filter is working -- please double check
 - the keyword filter box should have an x affordance at the right end to clear the current query
 - seems like cmd-enter still does not trigger breed when i'm not in a text box
+- when i right-click on a thumbnail (in the browser or in the breadcrumbs), there should be an option to open in a new tab, which opens the breeder studio with that image focused. not just open image in new tab, but open in new tab.
 
 ## Done
 
