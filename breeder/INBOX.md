@@ -9,8 +9,6 @@ triaged and implemented when you say so (e.g. "process the inbox").
 
 ## Pending
 
-- in the prompt fields, newlines should be respected, preserved, displayed. loras should always be listed last, and always just one per line, inserting newlines between if needed. (partially addressed -- the diff overlay now preserves real newlines in its display, see Done below. The bigger ask, auto-sorting loras to the end, is still unaddressed: needs a design pass on exactly when/how re-sorting kicks in before implementing, rather than guessing)
-
 ## Done
 
 - let's get rid of the preview image when hovering over a thumbnail. but we should still show the mutation. (thumbnail-grid hover now shows only the mutation caption, no enlarged image; breadcrumb hover unchanged)
@@ -37,6 +35,7 @@ triaged and implemented when you say so (e.g. "process the inbox").
 - arrow navigation doesn't work properly in filtered views. the selection visits items that aren't even visible. (real bug -- navigation read from the full unfiltered node list instead of the currently-rendered thumbnail cards. Now reads ids straight from the visible .thumb-card elements, so it can't jump to a filtered-out node)
 - when i click into a text box, the pixel positions of words change, and sometimes even the line breaks change, i presume because the font size or spacing has changed. (real bug -- the diff overlay explicitly set line-height:1.5, but form controls don't inherit line-height like normal text, so the real textarea was rendering at the browser's UA-default line-height instead. Set line-height:1.5 explicitly on .field-prompt so both match)
 - cmd-opt-up and cmd-option-dn are not working to change strength on keywords. what it does properly: from cursor at point within keyword, expands selection to full keyword. what it does not do properly: changes strength of keyword. (real regression from the diff-overlay refactor -- nudging a never-before-weighted keyword reused buildSegmentText's "plain" case, which intentionally ignores weight for the overlay's own display purposes, so the visible text never changed. Also found and fixed the underlying cause of the click-imprecision this surfaced: the [URGENT] fix above traded pointer-events pass-through for a cruder click-anywhere-focuses approach, losing native cursor placement. Reverted the overlay to pointer-events:none as the primary mechanism (restores precise click-to-cursor placement) with the click-handling fallback kept only as a defensive backstop that never fires in normal operation)
+- in the prompt fields, newlines should be respected, preserved, displayed. loras should always be listed last, and always just one per line, inserting newlines between if needed. (newlines are pure formatting within the existing comma-delimited structure -- already correctly preserved and already propagates to children, since mutations only copy/append the prompt string without touching existing whitespace. Added the one missing piece: on leaving the Prompt field, any `<lora:...>` segments are moved to the end, each on its own line, everything else kept in its original order/formatting)
 
 ## Won't fix
 

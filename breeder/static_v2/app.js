@@ -546,6 +546,15 @@ function buildForm(spec, knownModels, parentSpec) {
   const promptInput = el("textarea", { class: "field-prompt field-prompt-main" });
   promptInput.value = formSpec.prompt || "";
   promptInput.addEventListener("input", () => { formSpec.prompt = promptInput.value; });
+  // loras always move to the end (one per line) once you're done editing --
+  // not live on every keystroke, so it doesn't fight you mid-edit
+  promptInput.addEventListener("blur", () => {
+    const reordered = reorderLorasToEnd(promptInput.value);
+    if (reordered !== promptInput.value) {
+      promptInput.value = reordered;
+      formSpec.prompt = reordered;
+    }
+  });
   form.appendChild(fieldRow("Prompt", wrapFieldWithDiff(
     promptInput, parentSpec && parentSpec.prompt, formSpec.prompt,
     () => promptDiffDismissed, () => { promptDiffDismissed = true; }
@@ -861,6 +870,30 @@ function splitSegmentsPreservingSeparators(text) {
     pendingSep = "";
   }
   return { segs, seps };
+}
+
+// Moves every <lora:...> segment to the end of the prompt, each on its own
+// line, leaving all other segments in their original relative order and
+// original separators (commas are still the real delimiter -- the newlines
+// here are just formatting, same as anywhere else in the prompt).
+function reorderLorasToEnd(text) {
+  const { segs, seps } = splitSegmentsPreservingSeparators(text);
+  if (segs.length < 2) return text;
+  const kinds = segs.map((s) => parseSegment(s).kind);
+  if (!kinds.includes("lora")) return text;
+
+  let head = "";
+  let keptSoFar = 0;
+  const keptTotal = kinds.filter((k) => k !== "lora").length;
+  for (let i = 0; i < segs.length; i++) {
+    if (kinds[i] === "lora") continue;
+    head += segs[i];
+    keptSoFar++;
+    if (keptSoFar < keptTotal) head += seps[i] ?? ", ";
+  }
+
+  const loraTail = segs.filter((_, i) => kinds[i] === "lora").join(",\n");
+  return head ? `${head},\n${loraTail}` : loraTail;
 }
 
 // classic LCS-based diff over segment names, so removed/added segments show
