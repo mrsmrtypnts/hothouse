@@ -9,6 +9,8 @@ triaged and implemented when you say so (e.g. "process the inbox").
 
 ## Pending
 
+- as an alternative to the import button, i should be able to drag and drop an image onto the main image area. and there should be some way to choose whether or not the image spec to the right is overwritten by metadata from the dropped image. sometimes i want the metadata from the image, because it's just a straightforward replaceplacement for import. but in some cases i just want the image (for img2img) but don't want to change the image spec. not sure what the best ui is for this -- please suggest.
+
 ## Done
 
 - let's get rid of the preview image when hovering over a thumbnail. but we should still show the mutation. (thumbnail-grid hover now shows only the mutation caption, no enlarged image; breadcrumb hover unchanged)
