@@ -13,6 +13,7 @@ triaged and implemented when you say so (e.g. "process the inbox").
 - the outline on the selected thumb in the browser needs to be more visible
 - it would be cool if there were a visual distinction between "opened" (viewed) and "unopened" (not yet viewed) thumbs, kind of like in an email inbox. so that you can see which thumbs you've already viewed and which you still have yet to look at. not sure of best visual design.
 - cmd-enter to trigger breeding should work even if i'm not in the text box
+- when i use the arrow keys to navigate in the thumb browser, if i keep going down the selected thumb is no longer visible. the view should scroll down so that the selected thumb is always visible.
 
 ## Done
 
