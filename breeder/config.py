@@ -20,5 +20,6 @@ DATA_DIR = Path(os.environ.get("BREEDER_DATA_DIR", _default_data_dir)).expanduse
 IMAGE_DIR = DATA_DIR / "images"
 TREE_PATH = DATA_DIR / "tree.json"
 CORPUS_PATH = DATA_DIR / "corpus.json"
+LORA_HEALTH_PATH = DATA_DIR / "lora_health.json"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 IMAGE_DIR.mkdir(parents=True, exist_ok=True)

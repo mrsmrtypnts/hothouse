@@ -5,6 +5,7 @@ import re
 
 import corpus
 import promptsyntax
+import reliability
 from promptsyntax import KEYWORD_WEIGHT_RE, LORA_RE
 
 SAMPLERS = ["DPM++ 2M SDE", "Euler a", "Euler", "DPM++ 2M", "DPM++ 2M Karras", "DPM++ SDE Karras", "UniPC"]
@@ -189,7 +190,8 @@ def _remove_keyword(spec: dict) -> str:
 
 def _add_learned_lora(spec: dict) -> str:
     existing = _existing_names(spec.get("prompt", ""))
-    candidates = corpus.top_loras(existing)
+    unreliable = reliability.unreliable_names()
+    candidates = [c for c in corpus.top_loras(existing) if c[0] not in unreliable]
     if not candidates:
         return _nudge_lora_weight(spec)
     weights = [c[1] for c in candidates]

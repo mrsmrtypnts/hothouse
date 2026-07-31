@@ -21,6 +21,8 @@ import config
 import corpus
 import extract
 import mutate
+import promptsyntax
+import reliability
 import store
 
 # Loopback sockets on macOS are shared across every locally logged-in account,
@@ -174,6 +176,14 @@ def _crop_and_resize(image_bytes: bytes, target_w: int, target_h: int) -> bytes:
     return buf.getvalue()
 
 
+def _lora_names_in(spec: dict) -> list[str]:
+    names = []
+    for field in ("prompt", "negative_prompt"):
+        text = spec.get(field) or ""
+        names.extend(m.group(1).strip() for m in promptsyntax.LORA_RE.finditer(text))
+    return names
+
+
 async def _render_node(
     node_id: str,
     spec: dict,
@@ -200,8 +210,10 @@ async def _render_node(
             filename = api_filename or _image_filename(node_id, spec)
             (config.IMAGE_DIR / filename).write_bytes(image_bytes)
         await store.mark_done(node_id, filename)
+        reliability.record(_lora_names_in(spec), success=True)
     except Exception as exc:
         await store.mark_error(node_id, str(exc))
+        reliability.record(_lora_names_in(spec), success=False, error=str(exc))
 
 
 @app.post("/api/root")
@@ -387,6 +399,11 @@ async def get_corpus_summary():
     return corpus.summary()
 
 
+@app.get("/api/lora-health")
+async def get_lora_health():
+    return reliability.summary()
+
+
 @app.on_event("startup")
 async def recover_orphaned_renders() -> None:
     for node in store.pending_with_task_id():
@@ -408,8 +425,10 @@ async def recover_orphaned_renders() -> None:
             filename = api_filename or _image_filename(node["id"], node["spec"])
             (config.IMAGE_DIR / filename).write_bytes(image_bytes)
             await store.mark_done(node["id"], filename)
+            reliability.record(_lora_names_in(node["spec"]), success=True)
         except Exception as exc:
             await store.mark_error(node["id"], str(exc))
+            reliability.record(_lora_names_in(node["spec"]), success=False, error=str(exc))
 
 
 app.mount("/images", StaticFiles(directory=str(config.IMAGE_DIR)), name="images")
