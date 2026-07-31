@@ -13,6 +13,7 @@ triaged and implemented when you say so (e.g. "process the inbox").
 - let's make denoising strength into a slider 0 to 1 with 0.05 increments
 - the "read / unread" indicator should not toggle from unread to read if the generation hasn't yet completed. it can't be read until it's complete.
 - it looks like newlines in the prompt are saved but not displayed in the prompt text box until the cursor enters it. like, the prompt has newlines in it, and once i click into the box, they become visible i..e. are used to make new lines. but before i click into the box they are not respected in the way the prompt is displayed.
+- if the main image is not wide enough to fill the space available, it should be centered in the space available, not left-aligned in that space.
 
 ## Done
 
