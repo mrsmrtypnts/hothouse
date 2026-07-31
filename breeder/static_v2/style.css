@@ -69,7 +69,16 @@ button:disabled { opacity: 0.5; cursor: default; }
 }
 .splitter:hover, .splitter.dragging { background: var(--accent); }
 
-.filter-bar { display: flex; gap: 8px; margin-bottom: 14px; }
+.filter-bar {
+  display: flex;
+  gap: 8px;
+  margin: 0 -20px 14px;
+  padding: 12px 20px;
+  position: sticky;
+  top: -20px;
+  z-index: 3;
+  background: var(--bg-panel);
+}
 .keyword-filter-wrap { position: relative; flex: 1; min-width: 0; }
 .keyword-filter-wrap input[type=text] { width: 100%; padding-right: 26px; }
 .keyword-filter-clear {

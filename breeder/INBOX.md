@@ -10,8 +10,6 @@ triaged and implemented when you say so (e.g. "process the inbox").
 ## Pending
 
 - certain mutations reliably lead to failures, e.g. by invoking a lora that's not available. figure out a way to: (1) learn from experience which loras reliably lead to generation errors, (2) figure out a good way to persist that knowledge in private storage -- not via the repo, (3) use that knowledge to suppress mutations which invoke unavailabke loras.
-- when you scroll in the thumb browser, the filtering controls should remain visible, not scroll out of sight.
-
 ## Done
 
 - let's get rid of the preview image when hovering over a thumbnail. but we should still show the mutation. (thumbnail-grid hover now shows only the mutation caption, no enlarged image; breadcrumb hover unchanged)
@@ -43,6 +41,7 @@ triaged and implemented when you say so (e.g. "process the inbox").
 - edits to (negative) prompt should be sticky per tab and focus image. so if i make an edit to the prompt for one image, then switch to a different thumbnail, then come back, it hasn't forgotten the edits i made. (in-progress edits, and whether the diff-vs-parent overlay was dismissed, are now stashed per focus id when you switch away and restored when you come back -- including the "+ New" screen. Cleared on a full page reload by design, not meant to persist indefinitely)
 - [PY] reduce the frequency of the mutator which toggles aspect ratio. it should still happen, but rarely. (mutate.py's MUTATOR_WEIGHTS: dropped _toggle_orientation from 0.4 to 0.05 -- verified via direct simulation it went from ~4.5% to ~0.65% selection frequency. **This one needs a server restart on the other machine** -- it's the only breeder/*.py change in this batch, everything else is static_v2/*.)
 - problems with automatic scrolling of view of thumb browser. for one, if there is a generation ongoing, the scroll keeps getting overridden when you're trying to change it. for another, it is too insistent -- uh i don't know how to describe it. (real bug, my own regression -- rebuilding .browser-panel from scratch on every render resets scroll position to 0 as a side effect, same class of issue as the classic focus-loss render() gotcha. The earlier fix only stopped the *explicit* scrollIntoView call from over-firing but didn't address that underlying reset, so a poll tick still yanked your scroll position back to the top every 1.5s. Now captures scrollTop before rebuilding and restores it after, except on the specific render triggered by arrow-key navigation, which scrolls the new selection into view instead)
+- when you scroll in the thumb browser, the filtering controls should remain visible, not scroll out of sight. (`.filter-bar` is now `position: sticky` at the top of `.browser-panel`, with a matching background so thumbnails don't show through underneath it. Verified live: scrolled a 25-node test grid, filter bar stayed pinned with no gap/overlap)
 
 ## Won't fix
 
