@@ -273,7 +273,7 @@ button:disabled { opacity: 0.5; cursor: default; }
   color: var(--text);
   white-space: pre-wrap;
   overflow: auto;
-  pointer-events: none;
+  cursor: text;
 }
 .diff-added, .diff-increased { color: #7ed992; }
 .diff-decreased { color: #d97a7a; }

@@ -845,21 +845,27 @@ function buildDiffOverlay(spans) {
 }
 
 // Wraps a prompt/negative-prompt textarea with a diff overlay (shown until
-// the field is actually edited, per the field's own dismissed-flag) -- the
-// overlay is pointer-events:none and opaque, so clicks pass through to focus
-// the real (currently hidden-beneath-it) textarea, and the first edit removes
-// the overlay rather than trying to keep an editable textarea and a colored
-// ghost-inclusive overlay in character-for-character sync.
+// the field is actually edited or clicked, per the field's own
+// dismissed-flag). The overlay is itself directly clickable -- it dismisses
+// and focuses the real textarea on mousedown -- rather than trying to be
+// invisible-to-clicks via pointer-events, which makes the whole prompt box
+// unusable if that ever fails to hold up in some browser/environment.
 function wrapFieldWithDiff(inputEl, parentText, currentText, isDismissed, dismiss) {
   const wrap = el("div", { class: "field-prompt-wrap" });
   wrap.appendChild(inputEl);
   if (parentText != null && !isDismissed()) {
     const overlay = buildDiffOverlay(buildPromptDiffSpans(parentText || "", currentText || ""));
-    wrap.appendChild(overlay);
-    inputEl.addEventListener("input", () => {
+    const dismissOverlay = () => {
       dismiss();
       overlay.remove();
-    }, { once: true });
+      inputEl.focus();
+    };
+    overlay.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+      dismissOverlay();
+    });
+    wrap.appendChild(overlay);
+    inputEl.addEventListener("input", dismissOverlay, { once: true });
   }
   return wrap;
 }

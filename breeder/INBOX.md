@@ -7,10 +7,6 @@ elaborate, one line is usually enough.
 Nothing here gets acted on automatically. Add to it freely; things only get
 triaged and implemented when you say so (e.g. "process the inbox").
 
-## Urgent
-
-- something went wrong in recent commit. now i can't click in to prompt text boxes at all.
-
 ## Pending
 
 - in the prompt fields, newlines should be respected, preserved, displayed. loras should always be listed last, and always just one per line, inserting newlines between if needed. (bigger than a quick fix: the existing weight-nudge/diff-overlay code splits prompts on commas only, and this wants newlines to be meaningful too, plus an auto-reordering rule -- needs a design pass on exactly when/how re-sorting kicks in before implementing, rather than guessing)
@@ -29,6 +25,7 @@ triaged and implemented when you say so (e.g. "process the inbox").
 - cmd-enter to trigger breeding should work even if i'm not in the text box (the shortcut now fires from anywhere in the detail panel, not just the prompt/negative-prompt fields)
 - when i use the arrow keys to navigate in the thumb browser, if i keep going down the selected thumb is no longer visible. the view should scroll down so that the selected thumb is always visible. (scrollIntoView after every render, not just keyboard nav)
 - the filter controls have the same problem we've seen with other ui elements in the past: they keep losing focus if generations are in process. (real regression -- the poll-skip guard only checked focus inside .detail-panel, not .browser-panel where the filter inputs live; broadened the check to cover both)
+- [URGENT] something went wrong in recent commit. now i can't click in to prompt text boxes at all. (couldn't reproduce the exact symptom -- careful testing showed the diff-overlay's pointer-events:none click-through was actually working. But that design was fragile regardless: if pointer-events ever failed for any reason in some browser/environment, the whole prompt box becomes unusable, which is a bad failure mode for a cosmetic feature. Redesigned so the overlay is itself directly clickable -- dismisses and focuses the real textarea on mousedown -- instead of depending on CSS click-through at all. If this doesn't fix what you were seeing, please add more detail -- browser, exactly which field, whether it's every prompt field or just ones showing the diff overlay.)
 
 ## Won't fix
 
