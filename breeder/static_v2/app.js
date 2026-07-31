@@ -47,10 +47,6 @@ function stopPolling() {
   pollTimer = null;
 }
 
-// updated at the top of every render() so the arrow-key handler below can
-// navigate through the same order the thumbnail grid is actually showing
-let lastAllNodes = [];
-
 function gridColumnCount(cards) {
   if (!cards.length) return 1;
   const firstTop = cards[0].getBoundingClientRect().top;
@@ -62,27 +58,32 @@ function gridColumnCount(cards) {
   return count || 1;
 }
 
+// Reads ids straight from the currently-rendered .thumb-card elements
+// (which already reflect any active keyword/depth filter), rather than the
+// full unfiltered node list -- otherwise arrow-key navigation would jump to
+// nodes that aren't even visible in a filtered view.
 document.addEventListener("keydown", (e) => {
   if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key)) return;
   const active = document.activeElement;
   if (active && ["INPUT", "TEXTAREA", "SELECT"].includes(active.tagName)) return;
-  if (!lastAllNodes.length) return;
-
-  const idx = lastAllNodes.findIndex((n) => n.id === currentNodeId());
-  if (idx === -1) return;
 
   const cards = Array.from(document.querySelectorAll(".thumb-card"));
+  if (!cards.length) return;
+  const ids = cards.map((c) => new URLSearchParams(c.getAttribute("href").slice(1)).get("n"));
+  const idx = ids.indexOf(currentNodeId());
+  if (idx === -1) return;
+
   const cols = gridColumnCount(cards);
   let nextIdx = idx;
   if (e.key === "ArrowRight") nextIdx = idx + 1;
   else if (e.key === "ArrowLeft") nextIdx = idx - 1;
   else if (e.key === "ArrowDown") nextIdx = idx + cols;
   else if (e.key === "ArrowUp") nextIdx = idx - cols;
-  nextIdx = Math.max(0, Math.min(lastAllNodes.length - 1, nextIdx));
+  nextIdx = Math.max(0, Math.min(ids.length - 1, nextIdx));
 
   if (nextIdx !== idx) {
     e.preventDefault();
-    navigate(lastAllNodes[nextIdx].id);
+    navigate(ids[nextIdx]);
   }
 });
 
@@ -238,8 +239,20 @@ function markNodeViewed(id) {
   localStorage.setItem("breederV2ViewedNodes", JSON.stringify([...viewed]));
 }
 
+// Wires an element as a real navigable link to node `id` -- gives right-click
+// "open link in new tab", cmd/ctrl/middle-click "open in new tab", etc. for
+// free, while a plain left-click still does an in-page SPA navigation.
+// `el` must be an <a> with its href already set to match.
+function wireNavClick(el, id) {
+  el.addEventListener("click", (e) => {
+    if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    e.preventDefault();
+    navigate(id);
+  });
+}
+
 function thumbCard(node, selected, viewedIds) {
-  const card = el("div", { class: `thumb-card${selected ? " selected" : ""}` });
+  const card = el("a", { class: `thumb-card${selected ? " selected" : ""}`, href: `?n=${node.id}` });
 
   if (!viewedIds.has(node.id)) {
     card.appendChild(el("div", { class: "unread-dot" }));
@@ -279,7 +292,7 @@ function thumbCard(node, selected, viewedIds) {
   } else {
     card.appendChild(el("div", { class: "thumb-status" }, [el("div", { class: "spinner" })]));
   }
-  card.addEventListener("click", () => navigate(node.id));
+  wireNavClick(card, node.id);
   return card;
 }
 
@@ -405,10 +418,12 @@ function breadcrumbs(ancestors) {
     } else {
       crumbEl = el("span", { class: "crumb-pending", text: a.status === "error" ? "✗" : "…" });
     }
-    crumbEl.addEventListener("click", () => navigate(a.id));
     crumbEl.addEventListener("mouseenter", () => showHoverPreview(a, crumbEl, caption));
     crumbEl.addEventListener("mouseleave", hideHoverPreview);
-    bar.appendChild(crumbEl);
+    const link = el("a", { href: `?n=${a.id}`, class: "crumb-link" });
+    link.appendChild(crumbEl);
+    wireNavClick(link, a.id);
+    bar.appendChild(link);
     bar.appendChild(el("span", { class: "crumb-sep", text: "›" }));
   }
   return bar;
@@ -808,7 +823,13 @@ function nudgeWeightAtCursor(textarea, delta) {
   const segEnd = end - (raw.length - raw.trimEnd().length);
 
   const parsed = parseSegment(seg);
-  const replacement = buildSegmentText({ ...parsed, weight: clampWeight(parsed.weight + delta, parsed.bounds) });
+  // a plain (never-weighted) segment must be promoted to explicit "weighted"
+  // syntax to actually show the nudge -- buildSegmentText's "plain" case
+  // intentionally ignores weight (correct for the diff overlay's unchanged
+  // segments, but not for an active nudge)
+  const kind = parsed.kind === "plain" ? "weighted" : parsed.kind;
+  const newWeight = clampWeight(parsed.weight + delta, parsed.bounds);
+  const replacement = buildSegmentText({ ...parsed, kind, weight: newWeight });
   textarea.value = text.slice(0, segStart) + replacement + text.slice(segEnd);
   textarea.setSelectionRange(segStart, segStart + replacement.length);
   textarea.dispatchEvent(new Event("input", { bubbles: true }));
@@ -911,11 +932,16 @@ function buildDiffOverlay(spans) {
 }
 
 // Wraps a prompt/negative-prompt textarea with a diff overlay (shown until
-// the field is actually edited or clicked, per the field's own
-// dismissed-flag). The overlay is itself directly clickable -- it dismisses
-// and focuses the real textarea on mousedown -- rather than trying to be
-// invisible-to-clicks via pointer-events, which makes the whole prompt box
-// unusable if that ever fails to hold up in some browser/environment.
+// the field is actually edited or focused, per the field's own
+// dismissed-flag). Primary path: the overlay is pointer-events:none (see
+// CSS) so a real click passes straight through to inputEl, letting the
+// browser place the cursor exactly where clicked -- precision we'd lose if
+// the overlay intercepted the click itself. 'focus' fires as part of that
+// same click and dismisses the overlay. The overlay's own mousedown handler
+// below is a fallback only, for if pointer-events ever fails to hold up in
+// some browser/environment: it keeps the field at least usable (imprecise
+// cursor placement) rather than fully stuck, but never fires in normal
+// operation since the click never reaches the overlay itself.
 function wrapFieldWithDiff(inputEl, parentText, currentText, isDismissed, dismiss) {
   const wrap = el("div", { class: "field-prompt-wrap" });
   wrap.appendChild(inputEl);
@@ -924,11 +950,12 @@ function wrapFieldWithDiff(inputEl, parentText, currentText, isDismissed, dismis
     const dismissOverlay = () => {
       dismiss();
       overlay.remove();
-      inputEl.focus();
     };
+    inputEl.addEventListener("focus", dismissOverlay, { once: true });
     overlay.addEventListener("mousedown", (e) => {
       e.preventDefault();
       dismissOverlay();
+      inputEl.focus();
     });
     wrap.appendChild(overlay);
     inputEl.addEventListener("input", dismissOverlay, { once: true });
@@ -1047,7 +1074,6 @@ async function render(isPoll = false) {
     api.get("/api/nodes"),
     api.get("/api/models"),
   ]);
-  lastAllNodes = allNodes;
   let focusId = currentNodeId();
   if (focusId !== "new" && (!focusId || !allNodes.some((n) => n.id === focusId))) {
     focusId = allNodes.length ? allNodes[0].id : "new";
