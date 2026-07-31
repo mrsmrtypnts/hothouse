@@ -15,6 +15,7 @@ triaged and implemented when you say so (e.g. "process the inbox").
 - cmd-enter to trigger breeding should work even if i'm not in the text box
 - when i use the arrow keys to navigate in the thumb browser, if i keep going down the selected thumb is no longer visible. the view should scroll down so that the selected thumb is always visible.
 - in the prompt fields, newlines should be respected, preserved, displayed. loras should always be listed last, and always just one per line, inserting newlines between if needed.
+- the filter controls have the same problem we've seen with other ui elements in the past: they keep losing focus if generations are in process.
 
 ## Done
 
