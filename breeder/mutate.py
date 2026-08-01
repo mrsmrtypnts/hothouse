@@ -2,6 +2,7 @@ import copy
 import json
 import random
 import re
+from typing import Optional
 
 import corpus
 import promptsyntax
@@ -179,7 +180,7 @@ def _add_learned_keyword(spec: dict) -> str:
     return f"{prefix}+{name}"
 
 
-def _segment_positions(text: str, *, kind: str | None = None, exclude_kind: str | None = None) -> list[tuple[int, int]]:
+def _segment_positions(text: str, *, kind: Optional[str] = None, exclude_kind: Optional[str] = None) -> list[tuple[int, int]]:
     """Returns (line_index, segment_index) pairs for segments matching the
     given kind filter -- addressing by position within split_lines'
     structure, not a flat index, so the caller can remove exactly one segment
