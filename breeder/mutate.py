@@ -107,6 +107,19 @@ def _swap_sampler(spec: dict) -> str:
     return f"sampler→{new}"
 
 
+def _swap_model(spec: dict) -> str:
+    current = spec.get("model_name", "")
+    # corpus-informed rather than a fixed list (unlike _swap_sampler) --
+    # there's no built-in universe of valid model names/hashes to pick from
+    candidates = [(name, model_hash) for name, model_hash, _count in corpus.top_models() if name != current]
+    if not candidates:
+        return _nudge_steps(spec)
+    name, model_hash = random.choice(candidates)
+    spec["model_name"] = name
+    spec["model_hash"] = model_hash
+    return f"model→{name}"
+
+
 def _add_canned_keyword(spec: dict) -> str:
     prompt = spec.get("prompt", "")
     add = random.choice([m for m in MODIFIERS if m not in prompt] or MODIFIERS)
@@ -210,6 +223,7 @@ MUTATOR_WEIGHTS = [
     (_nudge_cfg_scale, 0.4),
     (_nudge_steps, 0.4),
     (_swap_sampler, 0.4),
+    (_swap_model, 0.18),  # ~2% selection frequency at default intensity -- jarring, keep it rare
     (_toggle_orientation, 0.05),  # jarring when it fires -- keep it rare
     (_add_canned_keyword, 0.3),
     (_nudge_keyword_weight, 1.0),
