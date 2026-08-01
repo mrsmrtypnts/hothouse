@@ -14,6 +14,7 @@ triaged and implemented when you say so (e.g. "process the inbox").
 - when i bounced the server, a ton of "unread" blue dot indicators came back on thumbnails that i actually did view before the server bounce
 - the big preview image is so big that it's pushing the mutation controls and the breed button below the fold. if that's the case it should dynamically size a little smaller
 - you are getting too aggressive on eliding the breadcrumb trail. i'm seeing the first two and last two with just ellipsis in between, even though there is horizontal space for a lot more. also, clicking on the ellipsis should restore the full breadcrumb trail, wrapping it if nec to fit in the window
+- mutation strength sliders: increment should be 0.5, not 0.5. max should be 5 not 3. default for "other mutations" should be 0.5 not 1
 - please consider showing the several mutation strength sliders as a single stack, labels on the left
 
 ## Done
