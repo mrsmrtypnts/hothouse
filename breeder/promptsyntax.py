@@ -43,34 +43,52 @@ def build_weighted_segment(name: str, weight: float) -> str:
 
 
 def split_segments(text: str) -> list[str]:
-    """Splits prompt text on commas and/or newlines -- normalize_prompt uses
-    newlines as a segment separator too, so parsing has to match."""
+    """Splits prompt text on commas and/or newlines, discarding line
+    structure -- fine for anything that only needs a flat bag of segments
+    (dedup, membership checks), but never for anything that edits the text
+    back, since rejoining loses the user's manual line grouping. Use
+    split_lines for that instead."""
     return _SEGMENT_SPLIT_RE.split(text)
 
 
+def split_lines(text: str) -> list[list[str]]:
+    """Splits text into raw lines, each further split into trimmed non-empty
+    comma-segments. Structure-preserving: rejoining each line's segments with
+    ", " and the lines themselves with ",\\n" reproduces the original layout
+    exactly. Use this (not split_segments) for anything that edits a prompt
+    back, so surgically touching one segment can't disturb a user's manual
+    line grouping anywhere else in the text."""
+    return [[s.strip() for s in line.split(",") if s.strip()] for line in text.split("\n")]
+
+
 def normalize_prompt(text: str) -> str:
-    """Reorders a prompt's segments into a canonical layout: pony score/source
-    tags together on the first line, then everything else, then loras last,
-    one per line. Idempotent -- safe to call on an already-normalized prompt.
+    """Pulls pony score/source tags out to a new first line and loras out to
+    the end (one per line), wherever in the prompt they were -- even mid-line.
+    Everything else keeps its original line grouping and relative order
+    completely untouched: users rely on manual newlines to cluster related
+    keywords together (e.g. "foo1,foo2,\nbar1,bar2"), and this must not
+    flatten that. Idempotent -- safe to call on an already-normalized prompt.
 
     Commas remain the real delimiter throughout -- the newlines inserted here
     are pure formatting, same convention as app.js's reorderLorasToEnd."""
-    pony, plain, loras = [], [], []
-    for seg in split_segments(text):
-        seg = seg.strip()
-        if not seg:
-            continue
-        name, _, kind = parse_segment(seg)
-        if kind == "lora":
-            loras.append(seg)
-        elif PONY_TAG_RE.match(name):
-            pony.append(seg)
-        else:
-            plain.append(seg)
+    pony: list[str] = []
+    loras: list[str] = []
+    kept_lines: list[str] = []
+    for segs in split_lines(text):
+        kept: list[str] = []
+        for seg in segs:
+            name, _, kind = parse_segment(seg)
+            if kind == "lora":
+                loras.append(seg)
+            elif PONY_TAG_RE.match(name):
+                pony.append(seg)
+            else:
+                kept.append(seg)
+        if kept:
+            kept_lines.append(", ".join(kept))
     lines = []
     if pony:
         lines.append(", ".join(pony))
-    if plain:
-        lines.append(", ".join(plain))
+    lines.extend(kept_lines)
     lines.extend(loras)
     return ",\n".join(lines)

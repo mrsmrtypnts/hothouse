@@ -175,15 +175,17 @@ def _add_learned_keyword(spec: dict) -> str:
     return f"{prefix}+{name}"
 
 
-def _removable_segment_indices(text: str) -> list[int]:
-    segments = promptsyntax.split_segments(text)
+def _removable_segment_indices(text: str) -> list[tuple[int, int]]:
+    """Returns (line_index, segment_index) pairs -- addressing by position
+    within split_lines' structure, not a flat index, so the caller can remove
+    exactly one segment via split_lines/rejoin without flattening every other
+    line in the prompt down to a single line in the process."""
     result = []
-    for i, s in enumerate(segments):
-        if not s.strip():
-            continue
-        _, _, kind = promptsyntax.parse_segment(s)
-        if kind != "lora":  # leave lora removal to a deliberate action, not this mutator
-            result.append(i)
+    for li, segs in enumerate(promptsyntax.split_lines(text)):
+        for si, s in enumerate(segs):
+            _, _, kind = promptsyntax.parse_segment(s)
+            if kind != "lora":  # leave lora removal to a deliberate action, not this mutator
+                result.append((li, si))
     return result
 
 
@@ -195,11 +197,11 @@ def _remove_keyword(spec: dict) -> str:
         candidates = _removable_segment_indices(spec.get(field, ""))
     if not candidates:
         return _add_learned_keyword(spec)
-    segments = promptsyntax.split_segments(spec[field])
-    i = random.choice(candidates)
-    name, _, _ = promptsyntax.parse_segment(segments[i])
-    segments.pop(i)
-    spec[field] = ",".join(segments)
+    lines = promptsyntax.split_lines(spec[field])
+    li, si = random.choice(candidates)
+    name, _, _ = promptsyntax.parse_segment(lines[li][si])
+    lines[li].pop(si)
+    spec[field] = ",\n".join(", ".join(segs) for segs in lines if segs)
     prefix = "neg " if field == "negative_prompt" else ""
     return f"{prefix}−{name}"
 

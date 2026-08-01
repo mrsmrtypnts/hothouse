@@ -997,24 +997,31 @@ function splitSegmentsPreservingSeparators(text) {
   return { segs, seps };
 }
 
-// Reorders a prompt's segments into a canonical layout: pony score/source
-// tags together on the first line, then everything else, then loras last,
-// one per line. Mirrors promptsyntax.py's normalize_prompt exactly, so the
-// live preview here matches what the server will store. Commas remain the
-// real delimiter throughout -- the newlines are just formatting.
+// Pulls pony score/source tags out to a new first line and loras out to the
+// end (one per line), wherever they were -- even mid-line. Everything else
+// keeps its original line grouping and relative order completely untouched:
+// users rely on manual newlines to cluster related keywords together (e.g.
+// "foo1,foo2,\nbar1,bar2"), and this must not flatten that. Mirrors
+// promptsyntax.py's normalize_prompt exactly, so the live preview here
+// matches what the server will store. Commas remain the real delimiter
+// throughout -- the newlines are just formatting.
 function normalizePromptText(text) {
-  const segs = splitSegments(text);
-  if (!segs.length) return text;
-  const pony = [], plain = [], loras = [];
-  for (const seg of segs) {
-    const parsed = parseSegment(seg);
-    if (parsed.kind === "lora") loras.push(seg);
-    else if (PONY_TAG_RE.test(parsed.name)) pony.push(seg);
-    else plain.push(seg);
+  const pony = [], loras = [], keptLines = [];
+  for (const rawLine of text.split("\n")) {
+    const kept = [];
+    for (const raw of rawLine.split(",")) {
+      const seg = raw.trim();
+      if (!seg) continue;
+      const parsed = parseSegment(seg);
+      if (parsed.kind === "lora") loras.push(seg);
+      else if (PONY_TAG_RE.test(parsed.name)) pony.push(seg);
+      else kept.push(seg);
+    }
+    if (kept.length) keptLines.push(kept.join(", "));
   }
   const lines = [];
   if (pony.length) lines.push(pony.join(", "));
-  if (plain.length) lines.push(plain.join(", "));
+  lines.push(...keptLines);
   lines.push(...loras);
   return lines.join(",\n");
 }
