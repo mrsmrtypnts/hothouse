@@ -11,6 +11,7 @@ triaged and implemented when you say so (e.g. "process the inbox").
 
 - Let's do some prompt normalization. In the prompt, loras should always appear last, and always just one per line. Also, pony keywords such as score_8_up should always appear on the first line, on a line by themselves.
 - understand "((foo))" and similar multiple parens as another way to write "(foo:1.2)". interpret it as such when you see it, but don't write it that way. also, don't write "(foo:1)", just write "foo". (this can happen if user decrements weight on "(foo:1.1)".
+- support cmd-z undo on edits to prompt
 
 ## Done
 
