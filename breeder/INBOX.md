@@ -12,6 +12,7 @@ triaged and implemented when you say so (e.g. "process the inbox").
 - Let's do some prompt normalization. In the prompt, loras should always appear last, and always just one per line. Also, pony keywords such as score_8_up should always appear on the first line, on a line by themselves.
 - understand "((foo))" and similar multiple parens as another way to write "(foo:1.2)". interpret it as such when you see it, but don't write it that way. also, don't write "(foo:1)", just write "foo". (this can happen if user decrements weight on "(foo:1.1)".
 - support cmd-z undo on edits to prompt
+- there are still problems with in-progress generations messing up user interaction with ui. for example, i'm trying to click the Breed button, but it is scrolled out over view at bottom of page. i scroll to get to it, but then the thing scrolls itself back before i can click the button, apparently because of something to do with ongoing generation. the ongoing generation should never mess with the ui or its responsiveness.
 
 ## Done
 
