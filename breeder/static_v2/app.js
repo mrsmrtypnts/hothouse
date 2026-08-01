@@ -17,6 +17,8 @@ const SAMPLERS = ["DPM++ 2M SDE", "Euler a", "Euler", "DPM++ 2M", "DPM++ 2M Karr
 const SIZE_OPTIONS = [
   { width: 800, height: 1200 },
   { width: 1200, height: 800 },
+  { width: 512, height: 768 },
+  { width: 768, height: 512 },
 ];
 
 function el(tag, attrs = {}, children = []) {
@@ -527,7 +529,7 @@ function buildSizeField(form) {
     select.appendChild(el("option", { value: key, text: `${opt.width} x ${opt.height}` }));
   }
   if (!seen) {
-    // preserve an existing node's size even if it predates these two presets
+    // preserve an existing node's size even if it isn't one of these presets
     select.appendChild(el("option", { value: currentKey, text: `${formSpec.width} x ${formSpec.height}` }));
   }
   select.value = currentKey;
