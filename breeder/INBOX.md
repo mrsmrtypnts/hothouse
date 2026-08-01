@@ -14,6 +14,7 @@ triaged and implemented when you say so (e.g. "process the inbox").
 - support cmd-z undo on edits to prompt
 - there are still problems with in-progress generations messing up user interaction with ui. for example, i'm trying to click the Breed button, but it is scrolled out over view at bottom of page. i scroll to get to it, but then the thing scrolls itself back before i can click the button, apparently because of something to do with ongoing generation. the ongoing generation should never mess with the ui or its responsiveness.
 - when i bounced the server, a ton of "unread" blue dot indicators came back on thumbnails that i actually did view before the server bounce
+- do we have a mutator that changes the model? if not, let's add one, with low probability, maybe expected likelihood about 2%
 
 ## Done
 
