@@ -9,7 +9,7 @@ triaged and implemented when you say so (e.g. "process the inbox").
 
 ## Pending
 
-- support cmd-z undo on edits to prompt
+- support cmd-z undo on edits to prompt (blocked on design: native browser undo mostly already works for typing, but every programmatic `.value` set in this app -- blur-normalization, cmd-opt-up/down nudges, poll-triggered sticky-edit restores -- silently wipes the browser's native undo stack, which is likely why it feels broken. Fixing this for real means a custom undo stack layered on top, which has to coexist with the existing per-node sticky-edit-on-focus-switch mechanism and the render() rebuild gotcha already biting this exact area twice before (scroll position, focus loss) -- wanted to flag the design tradeoff rather than guess at scope unsupervised)
 - there are still problems with in-progress generations messing up user interaction with ui. for example, i'm trying to click the Breed button, but it is scrolled out over view at bottom of page. i scroll to get to it, but then the thing scrolls itself back before i can click the button, apparently because of something to do with ongoing generation. the ongoing generation should never mess with the ui or its responsiveness.
 - when i bounced the server, a ton of "unread" blue dot indicators came back on thumbnails that i actually did view before the server bounce
 - the big preview image is so big that it's pushing the mutation controls and the breed button below the fold. if that's the case it should dynamically size a little smaller
