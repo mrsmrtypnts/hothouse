@@ -899,9 +899,17 @@ const KEYWORD_WEIGHT_RE = /^\(([^():]+):([0-9.]+)\)$/;
 const LORA_RE = /^<lora:([^:>]+):([0-9.]+)>$/;
 // mirrors promptsyntax.py's PONY_TAG_RE
 const PONY_TAG_RE = /^(score_\d+(_up)?|source_\w+)$/i;
+// A1111-style emphasis shorthand: (foo) = 1.1, ((foo)) = 1.2, and so on --
+// mirrors promptsyntax.py's NESTED_WEIGHT_RE. Only ever read, never written;
+// buildSegmentText always emits the explicit name:weight form (or a bare
+// name once weight rounds back to 1.0).
+const NESTED_WEIGHT_RE = /^(\(+)([^()]+)(\)+)$/;
 const KEYWORD_WEIGHT_BOUNDS = [0.3, 2.0];
 const LORA_WEIGHT_BOUNDS = [0.0, 1.5];
 const WEIGHT_STEP = 0.1;
+// how close a weight has to be to 1.0 to render as a bare name instead of
+// "(name:1.0)" -- mirrors promptsyntax.py's _UNWEIGHTED_TOLERANCE
+const UNWEIGHTED_TOLERANCE = 0.05;
 
 function clampWeight(value, [lo, hi]) {
   return Math.round(Math.min(hi, Math.max(lo, value)) * 100) / 100;
@@ -914,12 +922,19 @@ function parseSegment(seg) {
   if (m) return { name: m[1].trim(), weight: parseFloat(m[2]), kind: "lora", bounds: LORA_WEIGHT_BOUNDS };
   m = KEYWORD_WEIGHT_RE.exec(seg);
   if (m) return { name: m[1].trim(), weight: parseFloat(m[2]), kind: "weighted", bounds: KEYWORD_WEIGHT_BOUNDS };
+  m = NESTED_WEIGHT_RE.exec(seg);
+  if (m && m[1].length === m[3].length) {
+    const weight = Math.round((1.0 + 0.1 * m[1].length) * 100) / 100;
+    return { name: m[2].trim(), weight, kind: "weighted", bounds: KEYWORD_WEIGHT_BOUNDS };
+  }
   return { name: seg, weight: 1.0, kind: "plain", bounds: KEYWORD_WEIGHT_BOUNDS };
 }
 
 function buildSegmentText(seg) {
   if (seg.kind === "lora") return `<lora:${seg.name}:${seg.weight}>`;
-  if (seg.kind === "weighted") return `(${seg.name}:${seg.weight})`;
+  if (seg.kind === "weighted") {
+    return Math.abs(seg.weight - 1.0) < UNWEIGHTED_TOLERANCE ? seg.name : `(${seg.name}:${seg.weight})`;
+  }
   return seg.name;
 }
 

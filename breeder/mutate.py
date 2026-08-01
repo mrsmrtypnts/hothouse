@@ -136,7 +136,8 @@ def _nudge_keyword_weight(spec: dict) -> str:
     m = random.choice(matches)
     name, weight = m.group(1), float(m.group(2))
     new_weight = _apply_bounded_step(weight, KEYWORD_WEIGHT_BOUNDS)
-    spec[field] = text[:m.start()] + f"({name}:{new_weight})" + text[m.end():]
+    replacement = promptsyntax.build_weighted_segment(name, new_weight)
+    spec[field] = text[:m.start()] + replacement + text[m.end():]
     prefix = "neg " if field == "negative_prompt" else ""
     return f"{prefix}({name}) {weight}→{new_weight}"
 
@@ -167,7 +168,7 @@ def _add_learned_keyword(spec: dict) -> str:
     weights = [c[1] for c in candidates]
     name, _count, avg_weight = random.choices(candidates, weights=weights, k=1)[0]
     avg_weight = round(avg_weight, 1)
-    addition = name if abs(avg_weight - 1.0) < 0.05 else f"({name}:{avg_weight})"
+    addition = promptsyntax.build_weighted_segment(name, avg_weight)
     text = spec.get(field, "")
     spec[field] = f"{text}, {addition}" if text else addition
     prefix = "neg " if field == "negative_prompt" else ""
