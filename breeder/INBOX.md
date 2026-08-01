@@ -16,6 +16,7 @@ triaged and implemented when you say so (e.g. "process the inbox").
 - you are getting too aggressive on eliding the breadcrumb trail. i'm seeing the first two and last two with just ellipsis in between, even though there is horizontal space for a lot more. also, clicking on the ellipsis should restore the full breadcrumb trail, wrapping it if nec to fit in the window
 - mutation strength sliders: increment should be 0.5, not 0.5. max should be 5 not 3. default for "other mutations" should be 0.5 not 1
 - please consider showing the several mutation strength sliders as a single stack, labels on the left
+- seems like when i click retry the unread marker should come back
 
 ## Done
 
