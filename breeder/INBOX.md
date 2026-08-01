@@ -16,6 +16,7 @@ triaged and implemented when you say so (e.g. "process the inbox").
 - do we have a mutator that changes the model? if not, let's add one, with low probability, maybe expected likelihood about 2%
 - the big preview image is so big that it's pushing the mutation controls and the breed button below the fold. if that's the case it should dynamically size a little smaller
 - add 512x768 and 768x512 as possible sizes (but keep 800x1200 as default)
+- prompt normalization should not mess with existing newlines. i use newlines to separate clusters of logically related keywords, e.g. "foo1,foo2,foo3,\nbar1,bar2,bar3,bar4,\nbaz". it looks like prompt normalization is removing all of those newlines, and it shouldn't
 
 ## Done
 
