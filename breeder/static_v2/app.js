@@ -650,12 +650,29 @@ function getRerollPct() {
 function setRerollPct(pct) {
   sessionStorage.setItem("breederV2Reroll", String(pct));
 }
-function getMutationStrength() {
-  const stored = parseFloat(sessionStorage.getItem("breederV2MutationStrength"));
-  return isNaN(stored) ? 3 : stored;
+// Three independent "expected mutation count" sliders, mirroring
+// mutate.py's KEYWORD_MUTATORS/LORA_MUTATORS/OTHER_MUTATORS families --
+// replaces the old single combined "Mutation strength" field.
+function getKeywordIntensity() {
+  const stored = parseFloat(sessionStorage.getItem("breederV2KeywordIntensity"));
+  return isNaN(stored) ? 1 : stored;
 }
-function setMutationStrength(v) {
-  sessionStorage.setItem("breederV2MutationStrength", String(v));
+function setKeywordIntensity(v) {
+  sessionStorage.setItem("breederV2KeywordIntensity", String(v));
+}
+function getLoraIntensity() {
+  const stored = parseFloat(sessionStorage.getItem("breederV2LoraIntensity"));
+  return isNaN(stored) ? 1 : stored;
+}
+function setLoraIntensity(v) {
+  sessionStorage.setItem("breederV2LoraIntensity", String(v));
+}
+function getOtherIntensity() {
+  const stored = parseFloat(sessionStorage.getItem("breederV2OtherIntensity"));
+  return isNaN(stored) ? 1 : stored;
+}
+function setOtherIntensity(v) {
+  sessionStorage.setItem("breederV2OtherIntensity", String(v));
 }
 
 function buildRerollField() {
@@ -676,14 +693,23 @@ function buildRerollField() {
   return { wrap, slider };
 }
 
-function buildMutationStrengthField() {
-  const input = el("input", { type: "number", min: "0", step: "0.5" });
-  input.value = String(getMutationStrength());
-  input.addEventListener("input", () => {
-    const v = parseFloat(input.value);
-    if (!isNaN(v)) setMutationStrength(v);
+function buildIntensityField(label, getValue, setValue) {
+  const wrap = el("div", { class: "field-row" });
+  wrap.appendChild(el("span", { class: "field-label", text: label }));
+  const row = el("div", { class: "reroll-row" });
+  const initial = getValue();
+  const slider = el("input", { type: "range", min: "0", max: "3", step: "0.25" });
+  slider.value = String(initial);
+  const readout = el("span", { class: "reroll-readout", text: initial.toFixed(2) });
+  slider.addEventListener("input", () => {
+    const v = parseFloat(slider.value);
+    readout.textContent = v.toFixed(2);
+    setValue(v);
   });
-  return { wrap: fieldRow("Mutation strength", input), input };
+  row.appendChild(slider);
+  row.appendChild(readout);
+  wrap.appendChild(row);
+  return { wrap, slider };
 }
 
 function buildDenoiseField() {
@@ -712,7 +738,9 @@ function buildBreedControls(node) {
   countInput.value = "4";
 
   const reroll = buildRerollField();
-  const strength = buildMutationStrengthField();
+  const keywordIntensity = buildIntensityField("Keyword mutations", getKeywordIntensity, setKeywordIntensity);
+  const loraIntensity = buildIntensityField("Lora mutations", getLoraIntensity, setLoraIntensity);
+  const otherIntensity = buildIntensityField("Other mutations", getOtherIntensity, setOtherIntensity);
 
   let mode = getMode();
   const modeToggle = el("div", { class: "mode-toggle" });
@@ -743,7 +771,9 @@ function buildBreedControls(node) {
       count: parseInt(countInput.value, 10) || 1,
       mode,
       reroll_probability: parseFloat(reroll.slider.value) / 100,
-      mutator_intensity: parseFloat(strength.input.value) || 0,
+      keyword_intensity: parseFloat(keywordIntensity.slider.value) || 0,
+      lora_intensity: parseFloat(loraIntensity.slider.value) || 0,
+      other_intensity: parseFloat(otherIntensity.slider.value) || 0,
       spec: formSpec,
     };
     if (mode === "img2img") {
@@ -757,7 +787,9 @@ function buildBreedControls(node) {
 
   box.appendChild(fieldRow("Count", countInput));
   box.appendChild(reroll.wrap);
-  box.appendChild(strength.wrap);
+  box.appendChild(keywordIntensity.wrap);
+  box.appendChild(loraIntensity.wrap);
+  box.appendChild(otherIntensity.wrap);
   box.appendChild(modeToggle);
   box.appendChild(denoise.wrap);
   box.appendChild(breedBtn);
@@ -771,7 +803,9 @@ function buildFreshBreedControls() {
   countInput.value = "4";
 
   const reroll = buildRerollField();
-  const strength = buildMutationStrengthField();
+  const keywordIntensity = buildIntensityField("Keyword mutations", getKeywordIntensity, setKeywordIntensity);
+  const loraIntensity = buildIntensityField("Lora mutations", getLoraIntensity, setLoraIntensity);
+  const otherIntensity = buildIntensityField("Other mutations", getOtherIntensity, setOtherIntensity);
 
   const breedBtn = el("button", { class: "btn-breed", text: "Breed" });
   breedBtn.addEventListener("click", async () => {
@@ -780,7 +814,9 @@ function buildFreshBreedControls() {
     const body = {
       count: parseInt(countInput.value, 10) || 1,
       reroll_probability: parseFloat(reroll.slider.value) / 100,
-      mutator_intensity: parseFloat(strength.input.value) || 0,
+      keyword_intensity: parseFloat(keywordIntensity.slider.value) || 0,
+      lora_intensity: parseFloat(loraIntensity.slider.value) || 0,
+      other_intensity: parseFloat(otherIntensity.slider.value) || 0,
       spec: formSpec,
     };
     const nodes = await api.post("/api/root/breed", body);
@@ -789,7 +825,9 @@ function buildFreshBreedControls() {
 
   box.appendChild(fieldRow("Count", countInput));
   box.appendChild(reroll.wrap);
-  box.appendChild(strength.wrap);
+  box.appendChild(keywordIntensity.wrap);
+  box.appendChild(loraIntensity.wrap);
+  box.appendChild(otherIntensity.wrap);
   box.appendChild(breedBtn);
   return box;
 }

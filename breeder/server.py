@@ -118,10 +118,16 @@ class VariationsRequest(BaseModel):
     count: int = 6
     mode: str = "txt2img"
     denoising_strength: Optional[float] = None
-    # defaults approximate the old implicit (reroll entangled with 1-2 other
-    # mutators) behavior, for the old UI, which never sends these two fields
+    # defaults approximate the old implicit (reroll entangled with a bit of
+    # everything else) behavior, for the old UI, which never sends these fields.
+    # keyword/lora/other_intensity are independent sliders -- each is the
+    # expected number of mutations sampled from that family alone, so e.g. a
+    # keyword and a lora mutation can both land on the same child instead of
+    # competing for one shared slot the way a single combined intensity did.
     reroll_probability: float = 0.5
-    mutator_intensity: float = 1.0
+    keyword_intensity: float = 1.0
+    lora_intensity: float = 1.0
+    other_intensity: float = 1.0
     # ephemeral override for the base spec (new UI's edited form) -- never
     # written back to the parent node's stored spec
     spec: Optional[dict] = None
@@ -234,9 +240,13 @@ async def breed_roots(req: VariationsRequest):
     if req.spec is None:
         raise HTTPException(400, "spec is required")
     reroll_probability = min(1.0, max(0.0, req.reroll_probability))
-    mutator_intensity = max(0.0, req.mutator_intensity)
+    keyword_intensity = max(0.0, req.keyword_intensity)
+    lora_intensity = max(0.0, req.lora_intensity)
+    other_intensity = max(0.0, req.other_intensity)
     base_spec = mutate.ensure_concrete_seed(req.spec)
-    mutations = mutate.generate_children(base_spec, req.count, reroll_probability, mutator_intensity)
+    mutations = mutate.generate_children(
+        base_spec, req.count, reroll_probability, keyword_intensity, lora_intensity, other_intensity
+    )
     batch_id = uuid.uuid4().hex
     new_nodes = []
     for spec, label in mutations:
@@ -288,8 +298,12 @@ async def create_variations(node_id: str, req: VariationsRequest):
 
     base_spec = req.spec if req.spec is not None else parent["spec"]
     reroll_probability = min(1.0, max(0.0, req.reroll_probability))
-    mutator_intensity = max(0.0, req.mutator_intensity)
-    mutations = mutate.generate_children(base_spec, req.count, reroll_probability, mutator_intensity)
+    keyword_intensity = max(0.0, req.keyword_intensity)
+    lora_intensity = max(0.0, req.lora_intensity)
+    other_intensity = max(0.0, req.other_intensity)
+    mutations = mutate.generate_children(
+        base_spec, req.count, reroll_probability, keyword_intensity, lora_intensity, other_intensity
+    )
     batch_id = uuid.uuid4().hex
     new_nodes = []
     for spec, label in mutations:

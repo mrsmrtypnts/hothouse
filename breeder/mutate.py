@@ -121,6 +121,10 @@ def _swap_model(spec: dict) -> str:
 
 
 def _add_canned_keyword(spec: dict) -> str:
+    # not independently selectable -- only ever reached as _add_learned_keyword's
+    # fallback when the corpus has nothing to draw from, so there's always
+    # *something* sensible to add for "add a keyword" rather than degrading to
+    # an unrelated mutation
     prompt = spec.get("prompt", "")
     add = random.choice([m for m in MODIFIERS if m not in prompt] or MODIFIERS)
     spec["prompt"] = f"{prompt}, {add}" if prompt else add
@@ -164,7 +168,7 @@ def _add_learned_keyword(spec: dict) -> str:
     existing = _existing_names(spec.get(field, ""))
     candidates = corpus.top_keywords(field, existing)
     if not candidates:
-        return _nudge_cfg_scale(spec)
+        return _add_canned_keyword(spec)
     weights = [c[1] for c in candidates]
     name, _count, avg_weight = random.choices(candidates, weights=weights, k=1)[0]
     avg_weight = round(avg_weight, 1)
@@ -175,33 +179,44 @@ def _add_learned_keyword(spec: dict) -> str:
     return f"{prefix}+{name}"
 
 
-def _removable_segment_indices(text: str) -> list[tuple[int, int]]:
-    """Returns (line_index, segment_index) pairs -- addressing by position
-    within split_lines' structure, not a flat index, so the caller can remove
-    exactly one segment via split_lines/rejoin without flattening every other
-    line in the prompt down to a single line in the process."""
+def _segment_positions(text: str, *, kind: str | None = None, exclude_kind: str | None = None) -> list[tuple[int, int]]:
+    """Returns (line_index, segment_index) pairs for segments matching the
+    given kind filter -- addressing by position within split_lines'
+    structure, not a flat index, so the caller can remove exactly one segment
+    via split_lines/rejoin without flattening every other line in the prompt
+    down to a single line in the process."""
     result = []
     for li, segs in enumerate(promptsyntax.split_lines(text)):
         for si, s in enumerate(segs):
-            _, _, kind = promptsyntax.parse_segment(s)
-            if kind != "lora":  # leave lora removal to a deliberate action, not this mutator
-                result.append((li, si))
+            _, _, seg_kind = promptsyntax.parse_segment(s)
+            if kind is not None and seg_kind != kind:
+                continue
+            if exclude_kind is not None and seg_kind == exclude_kind:
+                continue
+            result.append((li, si))
     return result
+
+
+def _pop_segment(text: str, li: int, si: int) -> tuple[str, str]:
+    """Removes the segment at (line, index) from split_lines(text), returning
+    (new_text, removed_name). Drops the line entirely if it becomes empty --
+    never leaves a stray blank line -- and every other line is untouched."""
+    lines = promptsyntax.split_lines(text)
+    name, _, _ = promptsyntax.parse_segment(lines[li][si])
+    lines[li].pop(si)
+    return ",\n".join(", ".join(segs) for segs in lines if segs), name
 
 
 def _remove_keyword(spec: dict) -> str:
     field = "negative_prompt" if random.random() < NEGATIVE_REMOVE_CHANCE else "prompt"
-    candidates = _removable_segment_indices(spec.get(field, ""))
+    candidates = _segment_positions(spec.get(field, ""), exclude_kind="lora")
     if not candidates and field != "prompt":
         field = "prompt"
-        candidates = _removable_segment_indices(spec.get(field, ""))
+        candidates = _segment_positions(spec.get(field, ""), exclude_kind="lora")
     if not candidates:
         return _add_learned_keyword(spec)
-    lines = promptsyntax.split_lines(spec[field])
     li, si = random.choice(candidates)
-    name, _, _ = promptsyntax.parse_segment(lines[li][si])
-    lines[li].pop(si)
-    spec[field] = ",\n".join(", ".join(segs) for segs in lines if segs)
+    spec[field], name = _pop_segment(spec[field], li, si)
     prefix = "neg " if field == "negative_prompt" else ""
     return f"{prefix}−{name}"
 
@@ -222,18 +237,42 @@ def _add_learned_lora(spec: dict) -> str:
     return f"+lora:{name}"
 
 
-MUTATOR_WEIGHTS = [
+def _remove_lora(spec: dict) -> str:
+    field = _target_field()
+    candidates = _segment_positions(spec.get(field, ""), kind="lora")
+    if not candidates and field != "prompt":
+        field = "prompt"
+        candidates = _segment_positions(spec.get(field, ""), kind="lora")
+    if not candidates:
+        return _add_learned_lora(spec)
+    li, si = random.choice(candidates)
+    spec[field], name = _pop_segment(spec[field], li, si)
+    return f"−lora:{name}"
+
+
+# Three independent pools, one per UI slider -- each family samples its own
+# expected count via _sample_count, so e.g. a keyword mutation and a lora
+# mutation can both land on the same child instead of competing for one
+# shared slot. Relative weights within a family still matter (which specific
+# mutator fires); relative weights *across* families no longer do.
+KEYWORD_MUTATORS = [
+    (_add_learned_keyword, 2.0),
+    (_remove_keyword, 2.0),
+    (_nudge_keyword_weight, 1.0),
+]
+
+LORA_MUTATORS = [
+    (_add_learned_lora, 1.0),
+    (_remove_lora, 1.0),
+    (_nudge_lora_weight, 1.0),
+]
+
+OTHER_MUTATORS = [
     (_nudge_cfg_scale, 0.4),
     (_nudge_steps, 0.4),
     (_swap_sampler, 0.4),
-    (_swap_model, 0.18),  # ~2% selection frequency at default intensity -- jarring, keep it rare
-    (_toggle_orientation, 0.05),  # jarring when it fires -- keep it rare
-    (_add_canned_keyword, 0.3),
-    (_nudge_keyword_weight, 1.0),
-    (_nudge_lora_weight, 1.0),
-    (_add_learned_keyword, 2.0),
-    (_remove_keyword, 2.0),
-    (_add_learned_lora, 1.0),
+    (_swap_model, 0.05),  # no more frequent than orientation -- both jarring, keep rare
+    (_toggle_orientation, 0.05),
 ]
 
 
@@ -281,15 +320,22 @@ def _sample_count(intensity: float, pool_size: int) -> int:
     return max(0, min(k, pool_size))
 
 
-def _mutate_once_raw(spec: dict, reroll_probability: float, mutator_intensity: float) -> tuple[dict, str]:
+_FAMILIES = (KEYWORD_MUTATORS, LORA_MUTATORS, OTHER_MUTATORS)
+
+
+def _mutate_once_raw(
+    spec: dict, reroll_probability: float, keyword_intensity: float, lora_intensity: float, other_intensity: float
+) -> tuple[dict, str]:
+    intensities = (keyword_intensity, lora_intensity, other_intensity)
     for _ in range(10):
         child = copy.deepcopy(spec)
         tags = []
         if random.random() < reroll_probability:
             tags.append(_reroll_seed(child))
-        k = _sample_count(mutator_intensity, len(MUTATOR_WEIGHTS))
-        if k:
-            tags.extend(fn(child) for fn in _weighted_sample(MUTATOR_WEIGHTS, k=k))
+        for pool, intensity in zip(_FAMILIES, intensities):
+            k = _sample_count(intensity, len(pool))
+            if k:
+                tags.extend(fn(child) for fn in _weighted_sample(pool, k=k))
         if not tags:
             return child, "(no change)"
         if not _tags_cancel(tags):
@@ -299,20 +345,31 @@ def _mutate_once_raw(spec: dict, reroll_probability: float, mutator_intensity: f
     if reroll_probability > 0:
         tag = _reroll_seed(child)
     else:
-        fn = _weighted_sample(MUTATOR_WEIGHTS, k=1)[0]
+        nonzero = [(pool, intensity) for pool, intensity in zip(_FAMILIES, intensities) if intensity > 0]
+        if not nonzero:
+            return child, "(no change)"
+        pool = _weighted_sample(nonzero, k=1)[0]
+        fn = _weighted_sample(pool, k=1)[0]
         tag = fn(child)
     return child, tag
 
 
-def mutate_once(spec: dict, reroll_probability: float, mutator_intensity: float) -> tuple[dict, str]:
-    child, tag = _mutate_once_raw(spec, reroll_probability, mutator_intensity)
+def mutate_once(
+    spec: dict, reroll_probability: float, keyword_intensity: float, lora_intensity: float, other_intensity: float
+) -> tuple[dict, str]:
+    child, tag = _mutate_once_raw(spec, reroll_probability, keyword_intensity, lora_intensity, other_intensity)
     if child.get("prompt"):
         child["prompt"] = promptsyntax.normalize_prompt(child["prompt"])
     return child, tag
 
 
 def generate_children(
-    spec: dict, count: int, reroll_probability: float = 1.0, mutator_intensity: float = 1.0
+    spec: dict,
+    count: int,
+    reroll_probability: float = 1.0,
+    keyword_intensity: float = 1.0,
+    lora_intensity: float = 1.0,
+    other_intensity: float = 1.0,
 ) -> list[tuple[dict, str]]:
     children: list[tuple[dict, str]] = []
     seen: set[str] = set()
@@ -320,11 +377,11 @@ def generate_children(
         # a collision here means two independently-sampled mutations landed on an
         # identical result (guaranteed if both knobs are 0) -- retry a few times,
         # but duplicates are an acceptable outcome of that explicit choice
-        child, label = mutate_once(spec, reroll_probability, mutator_intensity)
+        child, label = mutate_once(spec, reroll_probability, keyword_intensity, lora_intensity, other_intensity)
         key = json.dumps(child, sort_keys=True)
         attempts = 0
         while key in seen and attempts < 10:
-            child, label = mutate_once(spec, reroll_probability, mutator_intensity)
+            child, label = mutate_once(spec, reroll_probability, keyword_intensity, lora_intensity, other_intensity)
             key = json.dumps(child, sort_keys=True)
             attempts += 1
         seen.add(key)
