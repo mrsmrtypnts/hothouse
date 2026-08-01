@@ -15,6 +15,7 @@ triaged and implemented when you say so (e.g. "process the inbox").
 - when i bounced the server, a ton of "unread" blue dot indicators came back on thumbnails that i actually did view before the server bounce
 - do we have a mutator that changes the model? if not, let's add one, with low probability, maybe expected likelihood about 2%
 - the big preview image is so big that it's pushing the mutation controls and the breed button below the fold. if that's the case it should dynamically size a little smaller
+- add 512x768 and 768x512 as possible sizes (but keep 800x1200 as default)
 
 ## Done
 
