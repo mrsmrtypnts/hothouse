@@ -214,7 +214,10 @@ def _remove_keyword(spec: dict) -> str:
         field = "prompt"
         candidates = _segment_positions(spec.get(field, ""), exclude_kind="lora")
     if not candidates:
-        return _add_learned_keyword(spec)
+        # nothing to remove -- a genuine no-op, not a disguised add. Keeps
+        # add/remove symmetric even at the floor (see mutate_once's caller,
+        # which filters out falsy tags rather than counting this as a change).
+        return ""
     li, si = random.choice(candidates)
     spec[field], name = _pop_segment(spec[field], li, si)
     prefix = "neg " if field == "negative_prompt" else ""
@@ -244,7 +247,8 @@ def _remove_lora(spec: dict) -> str:
         field = "prompt"
         candidates = _segment_positions(spec.get(field, ""), kind="lora")
     if not candidates:
-        return _add_learned_lora(spec)
+        # nothing to remove -- a genuine no-op, same reasoning as _remove_keyword
+        return ""
     li, si = random.choice(candidates)
     spec[field], name = _pop_segment(spec[field], li, si)
     return f"−lora:{name}"
@@ -335,7 +339,7 @@ def _mutate_once_raw(
         for pool, intensity in zip(_FAMILIES, intensities):
             k = _sample_count(intensity, len(pool))
             if k:
-                tags.extend(fn(child) for fn in _weighted_sample(pool, k=k))
+                tags.extend(tag for fn in _weighted_sample(pool, k=k) if (tag := fn(child)))
         if not tags:
             return child, "(no change)"
         if not _tags_cancel(tags):
@@ -351,7 +355,7 @@ def _mutate_once_raw(
         pool = _weighted_sample(nonzero, k=1)[0]
         fn = _weighted_sample(pool, k=1)[0]
         tag = fn(child)
-    return child, tag
+    return child, tag or "(no change)"
 
 
 def mutate_once(
