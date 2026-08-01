@@ -14,10 +14,24 @@ POLL_INTERVAL = 1.5
 POLL_TIMEOUT = 240
 
 
+def _raise_for_status(resp: httpx.Response) -> None:
+    """Like resp.raise_for_status(), but keeps whatever detail Diffus put in
+    the response body (e.g. why a model/lora was rejected) instead of
+    httpx's generic "400 Bad Request for url ..." message, which discards it."""
+    if not resp.is_error:
+        return
+    try:
+        payload = resp.json()
+        detail = payload.get("msg") or payload.get("detail") or payload
+    except ValueError:
+        detail = resp.text
+    raise RuntimeError(f"{resp.status_code} {config.API_BASE}: {detail}")
+
+
 async def submit(spec: dict) -> str:
     async with httpx.AsyncClient(timeout=30) as http:
         resp = await http.post(f"{config.API_BASE}/txt2img", json=spec, headers=HEADERS)
-        resp.raise_for_status()
+        _raise_for_status(resp)
         body = resp.json()
         return body["data"]["task_id"]
 
@@ -31,7 +45,7 @@ async def check_progress(task_id: str) -> Optional[dict]:
             params={"task_id": task_id},
             headers=HEADERS,
         )
-        resp.raise_for_status()
+        _raise_for_status(resp)
         data = resp.json()["data"]
         if data.get("failed_reason"):
             raise RuntimeError(data["failed_reason"])
@@ -75,5 +89,5 @@ async def submit_img2img(spec: dict, init_image_b64: str) -> str:
     body = {**spec, "mode": 0, "init_img": {"encoded_image": init_image_b64}}
     async with httpx.AsyncClient(timeout=30) as http:
         resp = await http.post(f"{config.API_BASE}/img2img", json=body, headers=HEADERS)
-        resp.raise_for_status()
+        _raise_for_status(resp)
         return resp.json()["data"]["task_id"]
