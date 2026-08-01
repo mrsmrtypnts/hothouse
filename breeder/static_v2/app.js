@@ -595,13 +595,15 @@ function buildForm(spec, knownModels, parentSpec) {
   const promptInput = el("textarea", { class: "field-prompt field-prompt-main" });
   promptInput.value = formSpec.prompt || "";
   promptInput.addEventListener("input", () => { formSpec.prompt = promptInput.value; });
-  // loras always move to the end (one per line) once you're done editing --
-  // not live on every keystroke, so it doesn't fight you mid-edit
+  // prompt is normalized (pony tags first, loras last, one per line) once
+  // you're done editing -- not live on every keystroke, so it doesn't fight
+  // you mid-edit. The server normalizes again on save regardless, so this is
+  // just a live preview of what will actually get stored.
   promptInput.addEventListener("blur", () => {
-    const reordered = reorderLorasToEnd(promptInput.value);
-    if (reordered !== promptInput.value) {
-      promptInput.value = reordered;
-      formSpec.prompt = reordered;
+    const normalized = normalizePromptText(promptInput.value);
+    if (normalized !== promptInput.value) {
+      promptInput.value = normalized;
+      formSpec.prompt = normalized;
     }
   });
   form.appendChild(fieldRow("Prompt", wrapFieldWithDiff(
@@ -895,6 +897,8 @@ function importRootLink() {
 // own mutators would
 const KEYWORD_WEIGHT_RE = /^\(([^():]+):([0-9.]+)\)$/;
 const LORA_RE = /^<lora:([^:>]+):([0-9.]+)>$/;
+// mirrors promptsyntax.py's PONY_TAG_RE
+const PONY_TAG_RE = /^(score_\d+(_up)?|source_\w+)$/i;
 const KEYWORD_WEIGHT_BOUNDS = [0.3, 2.0];
 const LORA_WEIGHT_BOUNDS = [0.0, 1.5];
 const WEIGHT_STEP = 0.1;
@@ -978,28 +982,26 @@ function splitSegmentsPreservingSeparators(text) {
   return { segs, seps };
 }
 
-// Moves every <lora:...> segment to the end of the prompt, each on its own
-// line, leaving all other segments in their original relative order and
-// original separators (commas are still the real delimiter -- the newlines
-// here are just formatting, same as anywhere else in the prompt).
-function reorderLorasToEnd(text) {
-  const { segs, seps } = splitSegmentsPreservingSeparators(text);
-  if (segs.length < 2) return text;
-  const kinds = segs.map((s) => parseSegment(s).kind);
-  if (!kinds.includes("lora")) return text;
-
-  let head = "";
-  let keptSoFar = 0;
-  const keptTotal = kinds.filter((k) => k !== "lora").length;
-  for (let i = 0; i < segs.length; i++) {
-    if (kinds[i] === "lora") continue;
-    head += segs[i];
-    keptSoFar++;
-    if (keptSoFar < keptTotal) head += seps[i] ?? ", ";
+// Reorders a prompt's segments into a canonical layout: pony score/source
+// tags together on the first line, then everything else, then loras last,
+// one per line. Mirrors promptsyntax.py's normalize_prompt exactly, so the
+// live preview here matches what the server will store. Commas remain the
+// real delimiter throughout -- the newlines are just formatting.
+function normalizePromptText(text) {
+  const segs = splitSegments(text);
+  if (!segs.length) return text;
+  const pony = [], plain = [], loras = [];
+  for (const seg of segs) {
+    const parsed = parseSegment(seg);
+    if (parsed.kind === "lora") loras.push(seg);
+    else if (PONY_TAG_RE.test(parsed.name)) pony.push(seg);
+    else plain.push(seg);
   }
-
-  const loraTail = segs.filter((_, i) => kinds[i] === "lora").join(",\n");
-  return head ? `${head},\n${loraTail}` : loraTail;
+  const lines = [];
+  if (pony.length) lines.push(pony.join(", "));
+  if (plain.length) lines.push(plain.join(", "));
+  lines.push(...loras);
+  return lines.join(",\n");
 }
 
 // classic LCS-based diff over segment names, so removed/added segments show

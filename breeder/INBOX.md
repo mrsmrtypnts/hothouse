@@ -9,7 +9,6 @@ triaged and implemented when you say so (e.g. "process the inbox").
 
 ## Pending
 
-- Let's do some prompt normalization. In the prompt, loras should always appear last, and always just one per line. Also, pony keywords such as score_8_up should always appear on the first line, on a line by themselves.
 - understand "((foo))" and similar multiple parens as another way to write "(foo:1.2)". interpret it as such when you see it, but don't write it that way. also, don't write "(foo:1)", just write "foo". (this can happen if user decrements weight on "(foo:1.1)".
 - support cmd-z undo on edits to prompt
 - there are still problems with in-progress generations messing up user interaction with ui. for example, i'm trying to click the Breed button, but it is scrolled out over view at bottom of page. i scroll to get to it, but then the thing scrolls itself back before i can click the button, apparently because of something to do with ongoing generation. the ongoing generation should never mess with the ui or its responsiveness.
@@ -18,6 +17,8 @@ triaged and implemented when you say so (e.g. "process the inbox").
 - the big preview image is so big that it's pushing the mutation controls and the breed button below the fold. if that's the case it should dynamically size a little smaller
 
 ## Done
+
+- Let's do some prompt normalization. In the prompt, loras should always appear last, and always just one per line. Also, pony keywords such as score_8_up should always appear on the first line, on a line by themselves. (added `promptsyntax.normalize_prompt`, applied server-side on every node-creation path -- `mutate.ensure_concrete_seed` for fresh roots/imports, and inside `mutate.mutate_once` for every generated child, so it also fires on plain user edits with zero mutators selected. Also extended app.js's existing lora-reorder-on-blur into a matching `normalizePromptText` so the live textarea preview matches what the server will actually store. Commas stay the real delimiter -- normalized lines are joined with ",\n", same convention as the existing lora-reordering feature. Verified live end-to-end against a throwaway instance: an out-of-order prompt with interleaved pony tags/keywords/loras came back correctly regrouped from `/api/root`, from a zero-mutator `/api/nodes/{id}/variations` call (confirming user edits are covered, not just mutations), and stayed correctly formatted across 10 real mutation rounds including keyword/lora add/remove and weight nudges. negative_prompt is untouched by design -- the ask was scoped to "the prompt".)
 
 - let's get rid of the preview image when hovering over a thumbnail. but we should still show the mutation. (thumbnail-grid hover now shows only the mutation caption, no enlarged image; breadcrumb hover unchanged)
 - the vertical space between the breadcrumb thumbs and the mutation string should equal the vertical space between the mutation string and the main image. right now the latter is larger. (removed `.mutation-label`'s -8px top margin so both gaps are 20px)

@@ -43,7 +43,7 @@ def _target_field() -> str:
 
 def _existing_names(text: str) -> set[str]:
     names = set()
-    for seg in text.split(","):
+    for seg in promptsyntax.split_segments(text):
         seg = seg.strip()
         if not seg:
             continue
@@ -56,6 +56,8 @@ def ensure_concrete_seed(spec: dict) -> dict:
     spec = copy.deepcopy(spec)
     if spec.get("seed", -1) in (None, -1):
         spec["seed"] = random.randint(0, 2**31 - 1)
+    if spec.get("prompt"):
+        spec["prompt"] = promptsyntax.normalize_prompt(spec["prompt"])
     return spec
 
 
@@ -160,7 +162,7 @@ def _add_learned_keyword(spec: dict) -> str:
 
 
 def _removable_segment_indices(text: str) -> list[int]:
-    segments = text.split(",")
+    segments = promptsyntax.split_segments(text)
     result = []
     for i, s in enumerate(segments):
         if not s.strip():
@@ -179,7 +181,7 @@ def _remove_keyword(spec: dict) -> str:
         candidates = _removable_segment_indices(spec.get(field, ""))
     if not candidates:
         return _add_learned_keyword(spec)
-    segments = spec[field].split(",")
+    segments = promptsyntax.split_segments(spec[field])
     i = random.choice(candidates)
     name, _, _ = promptsyntax.parse_segment(segments[i])
     segments.pop(i)
@@ -262,7 +264,7 @@ def _sample_count(intensity: float, pool_size: int) -> int:
     return max(0, min(k, pool_size))
 
 
-def mutate_once(spec: dict, reroll_probability: float, mutator_intensity: float) -> tuple[dict, str]:
+def _mutate_once_raw(spec: dict, reroll_probability: float, mutator_intensity: float) -> tuple[dict, str]:
     for _ in range(10):
         child = copy.deepcopy(spec)
         tags = []
@@ -282,6 +284,13 @@ def mutate_once(spec: dict, reroll_probability: float, mutator_intensity: float)
     else:
         fn = _weighted_sample(MUTATOR_WEIGHTS, k=1)[0]
         tag = fn(child)
+    return child, tag
+
+
+def mutate_once(spec: dict, reroll_probability: float, mutator_intensity: float) -> tuple[dict, str]:
+    child, tag = _mutate_once_raw(spec, reroll_probability, mutator_intensity)
+    if child.get("prompt"):
+        child["prompt"] = promptsyntax.normalize_prompt(child["prompt"])
     return child, tag
 
 
