@@ -276,6 +276,14 @@ function markNodeViewed(id) {
   viewed.add(id);
   localStorage.setItem("breederV2ViewedNodes", JSON.stringify([...viewed]));
 }
+// retrying replaces what this id will render as -- the fact you looked at
+// the old (failed) result shouldn't count as having seen the new one
+function markNodeUnviewed(id) {
+  const viewed = getViewedNodeIds();
+  if (!viewed.has(id)) return;
+  viewed.delete(id);
+  localStorage.setItem("breederV2ViewedNodes", JSON.stringify([...viewed]));
+}
 
 // Wires an element as a real navigable link to node `id` -- gives right-click
 // "open link in new tab", cmd/ctrl/middle-click "open in new tab", etc. for
@@ -322,6 +330,7 @@ function thumbCard(node, selected, viewedIds) {
       e.stopPropagation();
       retryBtn.disabled = true;
       await api.post(`/api/nodes/${node.id}/retry`, {});
+      markNodeUnviewed(node.id);
       render();
     });
     card.appendChild(retryBtn);
@@ -1295,6 +1304,7 @@ async function buildDetailPanel(focusId, knownModels) {
       retryBtn.disabled = true;
       retryBtn.textContent = "Retrying...";
       await api.post(`/api/nodes/${node.id}/retry`, {});
+      markNodeUnviewed(node.id);
       render();
     });
     errBox.appendChild(retryBtn);
