@@ -1,4 +1,4 @@
-// content.js — Post Media Downloader  v1.5
+// content.js — Post Media Downloader  v1.6
 // Injected on target site post pages.
 
 'use strict';
@@ -32,106 +32,6 @@ async function sniffAndFixFilename(url, filename) {
   } catch (e) {
     return filename; // on any error, keep the original name
   }
-}
-
-// ─── ZIP builder (store / no compression) ────────────────────────────────────
-// Runs entirely in the content script so no binary data ever has to cross the
-// extension-message boundary (which has a hard 64 MiB limit).
-
-const CRC32_TABLE = (() => {
-  const t = new Uint32Array(256);
-  for (let i = 0; i < 256; i++) {
-    let c = i;
-    for (let j = 0; j < 8; j++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
-    t[i] = c;
-  }
-  return t;
-})();
-
-function crc32(data) {
-  let c = 0xFFFFFFFF;
-  for (let i = 0; i < data.length; i++) c = CRC32_TABLE[(c ^ data[i]) & 0xFF] ^ (c >>> 8);
-  return (c ^ 0xFFFFFFFF) >>> 0;
-}
-
-function w16(v, b, o) { b[o] = v & 0xFF; b[o+1] = (v >> 8) & 0xFF; }
-function w32(v, b, o) { w16(v & 0xFFFF, b, o); w16((v >>> 16) & 0xFFFF, b, o+2); }
-
-function buildZip(files) {
-  const enc   = new TextEncoder();
-  const parts = [];
-  const cdir  = [];
-  let   off   = 0;
-
-  const now  = new Date();
-  const time = ((now.getHours() << 11) | (now.getMinutes() << 5) | (now.getSeconds() >> 1));
-  const date = (((now.getFullYear() - 1980) << 9) | ((now.getMonth() + 1) << 5) | now.getDate());
-
-  for (const f of files) {
-    const nb  = enc.encode(f.name);
-    const crc = crc32(f.data);
-    const sz  = f.data.length;
-
-    const lfh = new Uint8Array(30 + nb.length);
-    w32(0x04034b50, lfh,  0);
-    w16(20,         lfh,  4);
-    w16(0,          lfh,  6);
-    w16(0,          lfh,  8);  // stored (no compression)
-    w16(time,       lfh, 10);
-    w16(date,       lfh, 12);
-    w32(crc,        lfh, 14);
-    w32(sz,         lfh, 18);
-    w32(sz,         lfh, 22);
-    w16(nb.length,  lfh, 26);
-    w16(0,          lfh, 28);
-    lfh.set(nb, 30);
-
-    cdir.push({ nb, crc, sz, off, time, date });
-    parts.push(lfh, f.data);
-    off += 30 + nb.length + sz;
-  }
-
-  // Central directory
-  const cdStart = off;
-  for (const e of cdir) {
-    const cd = new Uint8Array(46 + e.nb.length);
-    w32(0x02014b50, cd,  0);
-    w16(20,         cd,  4);
-    w16(20,         cd,  6);
-    w16(0,          cd,  8);
-    w16(0,          cd, 10);
-    w16(e.time,     cd, 12);
-    w16(e.date,     cd, 14);
-    w32(e.crc,      cd, 16);
-    w32(e.sz,       cd, 20);
-    w32(e.sz,       cd, 24);
-    w16(e.nb.length,cd, 28);
-    w16(0, cd, 30); w16(0, cd, 32);
-    w16(0, cd, 34); w16(0, cd, 36);
-    w32(0, cd, 38);
-    w32(e.off,      cd, 42);
-    cd.set(e.nb, 46);
-    parts.push(cd);
-    off += 46 + e.nb.length;
-  }
-
-  // End-of-central-directory record
-  const cdSz = off - cdStart;
-  const eocd = new Uint8Array(22);
-  w32(0x06054b50,  eocd,  0);
-  w16(0, eocd,  4); w16(0, eocd, 6);
-  w16(cdir.length, eocd,  8);
-  w16(cdir.length, eocd, 10);
-  w32(cdSz,        eocd, 12);
-  w32(cdStart,     eocd, 16);
-  w16(0,           eocd, 20);
-  parts.push(eocd);
-
-  const total = parts.reduce((s, p) => s + p.length, 0);
-  const out   = new Uint8Array(total);
-  let   pos   = 0;
-  for (const p of parts) { out.set(p, pos); pos += p.length; }
-  return out.buffer;
 }
 
 const HOST_ID = 'pmd-host';
@@ -185,11 +85,6 @@ function sanitize(name) {
 function buildFilename(prefix, index, total, origName) {
   const pad = Math.max(2, String(total).length);
   return sanitize(prefix) + String(index).padStart(pad, '0') + '-' + sanitize(origName);
-}
-
-function postIdFromUrl() {
-  const m = location.pathname.match(/\/posts\/(\d+)/);
-  return m ? m[1] : 'post';
 }
 
 // ─── Media discovery ──────────────────────────────────────────────────────────
@@ -345,7 +240,7 @@ function buildHost() {
     <style>${CSS}</style>
     <div id="panel">
       <div class="hdr">
-        <span class="hdr-title">⬇ Media Downloader <em>v1.5</em></span>
+        <span class="hdr-title">⬇ Media Downloader <em>v1.6</em></span>
         <button class="x-btn" id="x">✕</button>
       </div>
       <div class="body">
@@ -353,11 +248,11 @@ function buildHost() {
         <div class="field">
           <span class="lbl">Tag</span>
           <input type="text" id="tag" placeholder='e.g.  my-post' autocomplete="off">
-          <span class="hint">Used as filename prefix and (for ⬇ Files) as the Downloads subfolder.</span>
+          <span class="hint">Used as filename prefix and (for ⬇ Files) as the Downloads subfolder. Press Enter to save.</span>
         </div>
 
         <div class="row">
-          <button class="btn grn" id="zip">📦 ZIP</button>
+          <button class="btn grn" id="save">📁 Save</button>
           <button class="btn pri" id="dl" >⬇ Files</button>
         </div>
 
@@ -367,7 +262,7 @@ function buildHost() {
 
         <div id="list">
           <div class="empty">
-            Click <strong>ZIP</strong> or <strong>⬇ Files</strong> to download.<br>
+            Click <strong>Save</strong> or <strong>⬇ Files</strong> to download.<br>
             Scroll through the post first so all items load.
           </div>
         </div>
@@ -393,7 +288,7 @@ function buildHost() {
   const fab      = shadow.getElementById('fab');
   const xBtn     = shadow.getElementById('x');
   const dlBtn    = shadow.getElementById('dl');
-  const zipBtn   = shadow.getElementById('zip');
+  const saveBtn  = shadow.getElementById('save');
   const tagIn    = shadow.getElementById('tag');
   const list     = shadow.getElementById('list');
   const statusEl = shadow.getElementById('status');
@@ -413,13 +308,19 @@ function buildHost() {
     panel.classList.remove('open');
     fab.style.display = '';
   });
+  tagIn.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      saveBtn.click();
+    }
+  });
 
   function checkConnection() {
     chrome.runtime.sendMessage({ action: 'ping' }, (res) => {
       if (chrome.runtime.lastError || !res?.ok) {
         setStatus('⚠ Connection lost — please refresh this page (Cmd+R).', 'warn');
-        dlBtn.disabled  = true;
-        zipBtn.disabled = true;
+        dlBtn.disabled   = true;
+        saveBtn.disabled = true;
       }
     });
   }
@@ -485,12 +386,12 @@ function buildHost() {
     setBusy(false);
   });
 
-  // ── ZIP download ──────────────────────────────────────────────────────────
-  zipBtn.addEventListener('click', async () => {
+  // ── Direct-to-folder download (no zip) ────────────────────────────────────
+  saveBtn.addEventListener('click', async () => {
     if (busy) return;
     const tag = tagIn.value.trim() || 'media';
 
-    // Auto-scan so ZIP works in one click without a prior Scan.
+    // Auto-scan so Save works in one click without a prior Scan.
     mediaItems = findMediaItems();
     renderList(mediaItems);
     dlBtn.disabled = !mediaItems.length;
@@ -506,18 +407,14 @@ function buildHost() {
       url:      item.url,
       filename: buildFilename(tag, origIdx, mediaItems.length, item.filename),
     }));
-    const safeTag = sanitize(tag);
-    const zipName = safeTag + '-post' + postIdFromUrl() + '.zip';
 
-    // Open the native save-file picker FIRST, while we still have a user
-    // gesture.  showSaveFilePicker() natively remembers the last directory
-    // the user chose, solving the "always back to ~/Downloads" problem.
-    let fileHandle;
+    // Open the native folder picker FIRST, while we still have a user
+    // gesture.  showDirectoryPicker() natively remembers the last directory
+    // the user chose, solving the "always back to ~/Downloads" problem —
+    // and files land already unzipped, so there's nothing to extract after.
+    let dirHandle;
     try {
-      fileHandle = await showSaveFilePicker({
-        suggestedName: zipName,
-        types: [{ description: 'ZIP Archive', accept: { 'application/zip': ['.zip'] } }],
-      });
+      dirHandle = await showDirectoryPicker({ mode: 'readwrite' });
     } catch (e) {
       if (e.name !== 'AbortError') setStatus(`Error: ${e.message}`, 'err');
       return; // user cancelled — do nothing
@@ -527,33 +424,23 @@ function buildHost() {
     setStatus('Starting…');
     setProgress(0, true);
 
-    // Fetch all files and build the ZIP entirely here in the content script.
-    // This avoids Chrome's 64 MiB extension-message size limit that would
-    // be hit if we tried to send the ZIP data through sendResponse.
-    // Content scripts can fetch cross-origin URLs covered by host_permissions.
+    // Content scripts with host_permissions can fetch cross-origin URLs
+    // directly, bypassing CORS, so each file is fetched and written to the
+    // chosen folder one at a time here in the content script.
     try {
-      let fetched = 0;
-      const files = await Promise.all(items.map(item =>
-        fetchViaBackground(item.url).then(data => {
-          fetched++;
-          setStatus(`Fetching ${fetched}/${items.length}…`);
-          setProgress(fetched / items.length * 80, true);
-          return { name: correctExtension(item.filename, data), data };
-        })
-      ));
-
-      setStatus('Building ZIP…');
-      setProgress(90, true);
-      const zipBuf = buildZip(files);
-
-      setStatus('Writing file…');
-      setProgress(98, true);
-      const writable = await fileHandle.createWritable();
-      await writable.write(new Blob([zipBuf], { type: 'application/zip' }));
-      await writable.close();
-
+      let done = 0;
+      for (const item of items) {
+        setStatus(`Saving ${done + 1}/${items.length}…`);
+        const data = await fetchViaBackground(item.url);
+        const name = correctExtension(item.filename, data);
+        const fileHandle = await dirHandle.getFileHandle(name, { create: true });
+        const writable = await fileHandle.createWritable();
+        await writable.write(data);
+        await writable.close();
+        done++;
+        setProgress(done / items.length * 100, true);
+      }
       setStatus(`Done — saved ${items.length} file${items.length !== 1 ? 's' : ''}.`);
-      setProgress(100, true);
     } catch (e) {
       setStatus(`Error: ${e.message}`, 'err');
       setProgress(0, false);
@@ -603,8 +490,8 @@ function buildHost() {
 
   function setBusy(b) {
     busy = b;
-    dlBtn.disabled  = b;
-    zipBtn.disabled = b;
+    dlBtn.disabled   = b;
+    saveBtn.disabled = b;
   }
 
   function mark(el, cls, txt) {

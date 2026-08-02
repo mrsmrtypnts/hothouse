@@ -1,4 +1,4 @@
-// background.js — Post Media Downloader  v1.5
+// background.js — Post Media Downloader  v1.6
 // Service worker: handles ping and individual file downloads.
 
 'use strict';
