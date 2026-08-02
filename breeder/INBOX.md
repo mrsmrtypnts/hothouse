@@ -15,6 +15,7 @@ triaged and implemented when you say so (e.g. "process the inbox").
 - the big preview image is so big that it's pushing the mutation controls and the breed button below the fold. if that's the case it should dynamically size a little smaller
 - you are getting too aggressive on eliding the breadcrumb trail. i'm seeing the first two and last two with just ellipsis in between, even though there is horizontal space for a lot more. also, clicking on the ellipsis should restore the full breadcrumb trail, wrapping it if nec to fit in the window
 - seems like when i click retry the unread marker should come back
+- replace filter for descendent depth with filter for total number of descendents (incl. indirect). make a good choice on control type, bounds, increment, etc. and just implement it
 
 ## Done
 
