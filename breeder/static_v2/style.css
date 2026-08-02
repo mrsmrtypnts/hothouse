@@ -337,7 +337,7 @@ button:disabled { opacity: 0.5; cursor: default; }
 
 .breed-controls {
   display: flex;
-  align-items: flex-end;
+  align-items: flex-start;
   gap: 12px;
   flex-wrap: wrap;
   padding-top: 16px;
@@ -346,6 +346,11 @@ button:disabled { opacity: 0.5; cursor: default; }
 .reroll-row { display: flex; align-items: center; gap: 8px; height: 31px; }
 .reroll-row input[type=range] { width: 120px; accent-color: var(--accent); }
 .reroll-readout { min-width: 34px; font-size: 13px; color: var(--text-dim); }
+
+.mutation-sliders { display: flex; flex-direction: column; gap: 6px; }
+.slider-row { display: flex; align-items: center; gap: 8px; height: 31px; }
+.slider-row .field-label { min-width: 130px; flex-shrink: 0; }
+.slider-row input[type=range] { width: 120px; accent-color: var(--accent); }
 
 .mode-toggle { display: flex; border: 1px solid var(--border-light); border-radius: var(--radius-sm); overflow: hidden; }
 .mode-toggle button { border: none; border-radius: 0; background: transparent; color: var(--text-dim); }

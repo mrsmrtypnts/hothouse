@@ -669,16 +669,15 @@ function setLoraIntensity(v) {
 }
 function getOtherIntensity() {
   const stored = parseFloat(sessionStorage.getItem("breederV2OtherIntensity"));
-  return isNaN(stored) ? 1 : stored;
+  return isNaN(stored) ? 0.5 : stored;
 }
 function setOtherIntensity(v) {
   sessionStorage.setItem("breederV2OtherIntensity", String(v));
 }
 
 function buildRerollField() {
-  const wrap = el("div", { class: "field-row" });
+  const wrap = el("div", { class: "slider-row" });
   wrap.appendChild(el("span", { class: "field-label", text: "Reroll probability" }));
-  const row = el("div", { class: "reroll-row" });
   const initial = getRerollPct();
   const slider = el("input", { type: "range", min: "0", max: "100", step: "10" });
   slider.value = String(initial);
@@ -687,18 +686,16 @@ function buildRerollField() {
     readout.textContent = `${slider.value}%`;
     setRerollPct(parseInt(slider.value, 10));
   });
-  row.appendChild(slider);
-  row.appendChild(readout);
-  wrap.appendChild(row);
+  wrap.appendChild(slider);
+  wrap.appendChild(readout);
   return { wrap, slider };
 }
 
 function buildIntensityField(label, getValue, setValue) {
-  const wrap = el("div", { class: "field-row" });
+  const wrap = el("div", { class: "slider-row" });
   wrap.appendChild(el("span", { class: "field-label", text: label }));
-  const row = el("div", { class: "reroll-row" });
   const initial = getValue();
-  const slider = el("input", { type: "range", min: "0", max: "3", step: "0.25" });
+  const slider = el("input", { type: "range", min: "0", max: "5", step: "0.5" });
   slider.value = String(initial);
   const readout = el("span", { class: "reroll-readout", text: initial.toFixed(2) });
   slider.addEventListener("input", () => {
@@ -706,9 +703,8 @@ function buildIntensityField(label, getValue, setValue) {
     readout.textContent = v.toFixed(2);
     setValue(v);
   });
-  row.appendChild(slider);
-  row.appendChild(readout);
-  wrap.appendChild(row);
+  wrap.appendChild(slider);
+  wrap.appendChild(readout);
   return { wrap, slider };
 }
 
@@ -741,6 +737,11 @@ function buildBreedControls(node) {
   const keywordIntensity = buildIntensityField("Keyword mutations", getKeywordIntensity, setKeywordIntensity);
   const loraIntensity = buildIntensityField("Lora mutations", getLoraIntensity, setLoraIntensity);
   const otherIntensity = buildIntensityField("Other mutations", getOtherIntensity, setOtherIntensity);
+  const sliderStack = el("div", { class: "mutation-sliders" });
+  sliderStack.appendChild(reroll.wrap);
+  sliderStack.appendChild(keywordIntensity.wrap);
+  sliderStack.appendChild(loraIntensity.wrap);
+  sliderStack.appendChild(otherIntensity.wrap);
 
   let mode = getMode();
   const modeToggle = el("div", { class: "mode-toggle" });
@@ -786,10 +787,7 @@ function buildBreedControls(node) {
   });
 
   box.appendChild(fieldRow("Count", countInput));
-  box.appendChild(reroll.wrap);
-  box.appendChild(keywordIntensity.wrap);
-  box.appendChild(loraIntensity.wrap);
-  box.appendChild(otherIntensity.wrap);
+  box.appendChild(sliderStack);
   box.appendChild(modeToggle);
   box.appendChild(denoise.wrap);
   box.appendChild(breedBtn);
@@ -806,6 +804,11 @@ function buildFreshBreedControls() {
   const keywordIntensity = buildIntensityField("Keyword mutations", getKeywordIntensity, setKeywordIntensity);
   const loraIntensity = buildIntensityField("Lora mutations", getLoraIntensity, setLoraIntensity);
   const otherIntensity = buildIntensityField("Other mutations", getOtherIntensity, setOtherIntensity);
+  const sliderStack = el("div", { class: "mutation-sliders" });
+  sliderStack.appendChild(reroll.wrap);
+  sliderStack.appendChild(keywordIntensity.wrap);
+  sliderStack.appendChild(loraIntensity.wrap);
+  sliderStack.appendChild(otherIntensity.wrap);
 
   const breedBtn = el("button", { class: "btn-breed", text: "Breed" });
   breedBtn.addEventListener("click", async () => {
@@ -824,10 +827,7 @@ function buildFreshBreedControls() {
   });
 
   box.appendChild(fieldRow("Count", countInput));
-  box.appendChild(reroll.wrap);
-  box.appendChild(keywordIntensity.wrap);
-  box.appendChild(loraIntensity.wrap);
-  box.appendChild(otherIntensity.wrap);
+  box.appendChild(sliderStack);
   box.appendChild(breedBtn);
   return box;
 }

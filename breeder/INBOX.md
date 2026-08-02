@@ -14,11 +14,12 @@ triaged and implemented when you say so (e.g. "process the inbox").
 - when i bounced the server, a ton of "unread" blue dot indicators came back on thumbnails that i actually did view before the server bounce
 - the big preview image is so big that it's pushing the mutation controls and the breed button below the fold. if that's the case it should dynamically size a little smaller
 - you are getting too aggressive on eliding the breadcrumb trail. i'm seeing the first two and last two with just ellipsis in between, even though there is horizontal space for a lot more. also, clicking on the ellipsis should restore the full breadcrumb trail, wrapping it if nec to fit in the window
-- mutation strength sliders: increment should be 0.5, not 0.5. max should be 5 not 3. default for "other mutations" should be 0.5 not 1
-- please consider showing the several mutation strength sliders as a single stack, labels on the left
 - seems like when i click retry the unread marker should come back
 
 ## Done
+
+- mutation strength sliders: increment should be 0.5, not 0.5. max should be 5 not 3. default for "other mutations" should be 0.5 not 1 (in app.js's `buildIntensityField`: step 0.25→0.5, max 3→5; `getOtherIntensity`'s default 1→0.5, matched server-side in `VariationsRequest.other_intensity` and `mutate.generate_children`'s default. Keyword/lora mutation defaults stay at 1, untouched, since only "other mutations" was called out. Verified live: fresh "+ New" panel shows Other mutations defaulting to 0.50 with a 0-5 range in 0.5 steps.)
+- please consider showing the several mutation strength sliders as a single stack, labels on the left (reroll probability + the three intensity sliders now render as one `.mutation-sliders` column, each row using a shared `.slider-row` layout with a fixed-width label on the left instead of the old label-above-slider layout. Also fixed a layout bug this surfaced: `.breed-controls`' `align-items: flex-end` bottom-aligned the Count field and Breed button to the bottom of this now much-taller stack, visually overlapping it -- switched to `align-items: flex-start`. Verified live: screenshotted the "+ New" panel, confirmed no overlap and clean label-left alignment.)
 
 - add 512x768 and 768x512 as possible sizes (but keep 800x1200 as default) (added both to app.js's `SIZE_OPTIONS` list, after the existing 800x1200/1200x800 pair; 800x1200 stays first in the dropdown and is still the server-side default in `DEFAULTS`, untouched. Verified live in a throwaway instance: the Size dropdown on the "+ New" screen shows all 4 options in order.)
 
