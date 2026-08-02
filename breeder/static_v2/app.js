@@ -67,6 +67,13 @@ function gridColumnCount(cards) {
 // generating must never fight the user's own scrolling)
 let scrollSelectedIntoView = false;
 
+// which node's detail panel was rendered last -- lets render() tell a poll
+// tick re-rendering the *same* node (preserve scroll, e.g. so a poll firing
+// while you're scrolling down toward the Breed button can't snap you back to
+// the top mid-scroll) apart from actually navigating to a *different* node
+// (reset scroll to the top, since it's all new content)
+let lastDetailFocusId = null;
+
 // Reads ids straight from the currently-rendered .thumb-card elements
 // (which already reflect any active keyword/depth filter), rather than the
 // full unfiltered node list -- otherwise arrow-key navigation would jump to
@@ -1364,6 +1371,12 @@ async function render(isPoll = false) {
   // explicitly scroll anywhere -- same render() gotcha as the focus-loss
   // bug, just for scroll instead. Capture it now, restore it below.
   const prevScrollTop = document.querySelector(".browser-panel")?.scrollTop ?? 0;
+  // same gotcha again, this time for the detail panel -- a poll tick firing
+  // while the user has scrolled down (e.g. reaching for the Breed button on
+  // a tall form) was snapping them straight back to the top, mid-scroll.
+  // Only restore this when it's the same node re-rendering, though --
+  // switching to a different node should still start scrolled to the top.
+  const prevDetailScrollTop = document.querySelector(".detail-panel")?.scrollTop ?? 0;
   // same DOM-rebuild gotcha, this time for a manually-resized prompt textarea:
   // its height lives only in an inline style the browser sets on drag, so a
   // rebuild silently drops it back to the CSS default. Carry it over by hand.
@@ -1399,6 +1412,12 @@ async function render(isPoll = false) {
     const negEl = wrap.querySelector(".field-prompt-neg");
     if (negEl) negEl.style.height = prevNegHeight;
   }
+
+  const detailPanel = wrap.querySelector(".detail-panel");
+  if (detailPanel) {
+    detailPanel.scrollTop = focusId === lastDetailFocusId ? prevDetailScrollTop : 0;
+  }
+  lastDetailFocusId = focusId;
 
   // only scroll the selection into view when arrow-key navigation asked for
   // it (see the keydown handler below) -- doing this on every render was too
