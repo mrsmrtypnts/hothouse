@@ -7,8 +7,14 @@ load_dotenv(Path(__file__).parent / ".env")
 
 API_BASE = os.environ.get("BREEDER_API_BASE", "https://sd-api.diffus.me/api/v3")
 API_KEY = os.environ.get("BREEDER_API_KEY", "")
-DEFAULT_MODEL_NAME = os.environ.get("BREEDER_MODEL_NAME", "")
-DEFAULT_MODEL_HASH = os.environ.get("BREEDER_MODEL_HASH", "")
+# Fallback default model, used only when creating a root with no better model
+# info available yet (no corpus scan, no prior generations to draw from). Not
+# the normal way to pick a model -- that's the Studio UI's model dropdown, or
+# whatever an imported image's own metadata specifies. Not a secret (it's a
+# public checkpoint name/hash), so unlike the settings above it's fine to
+# hardcode here rather than read from .env.
+DEFAULT_MODEL_NAME = "ponyDiffusionV6XL_v6.safetensors"
+DEFAULT_MODEL_HASH = "67ab2fd8ec"
 PORT = int(os.environ.get("BREEDER_PORT", "8731"))
 CORPUS_DIRS = [p.strip() for p in os.environ.get("BREEDER_CORPUS_DIRS", "").split(",") if p.strip()]
 
