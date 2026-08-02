@@ -39,6 +39,7 @@ function currentNodeId() {
 function navigate(id) {
   const url = id ? `?n=${id}` : location.pathname;
   history.pushState({}, "", url);
+  expandedCrumbsFor = null;
   render();
 }
 window.addEventListener("popstate", () => render());
@@ -447,19 +448,30 @@ function buildBrowserPanel(allNodes, focusId) {
 
 // Elides the middle of a long ancestor trail (keeping a few at each end) so
 // a deep lineage doesn't push the "+ New"/"Import..." buttons off-screen.
-const CRUMB_HEAD = 2;
-const CRUMB_TAIL = 2;
-function abbreviateCrumbs(ancestors) {
-  if (ancestors.length <= CRUMB_HEAD + CRUMB_TAIL + 1) return ancestors;
-  return [...ancestors.slice(0, CRUMB_HEAD), null, ...ancestors.slice(-CRUMB_TAIL)];
+const CRUMB_MIN_HEAD = 2;
+const CRUMB_MIN_TAIL = 2;
+// which node's breadcrumb trail the user clicked "…" to fully expand -- reset
+// on every navigate() so each node starts collapsed; survives poll-triggered
+// render() rebuilds in the meantime since it's plain module state, not DOM.
+let expandedCrumbsFor = null;
+
+function sliceWithEllipsis(ancestors, head, tail) {
+  if (head + tail >= ancestors.length) return ancestors;
+  return [...ancestors.slice(0, head), null, ...ancestors.slice(ancestors.length - tail)];
 }
 
-function breadcrumbs(ancestors) {
-  const bar = el("div", { class: "crumbs" });
-  for (const a of abbreviateCrumbs(ancestors)) {
+function renderCrumbItems(itemsWrap, items, nodeId) {
+  itemsWrap.textContent = "";
+  for (const a of items) {
     if (a === null) {
-      bar.appendChild(el("span", { class: "crumb-ellipsis", text: "…" }));
-      bar.appendChild(el("span", { class: "crumb-sep", text: "›" }));
+      const ellipsis = el("span", { class: "crumb-ellipsis", text: "…" });
+      ellipsis.title = "show full trail";
+      ellipsis.addEventListener("click", () => {
+        expandedCrumbsFor = nodeId;
+        render();
+      });
+      itemsWrap.appendChild(ellipsis);
+      itemsWrap.appendChild(el("span", { class: "crumb-sep", text: "›" }));
       continue;
     }
     const caption = a.label || "original";
@@ -474,9 +486,53 @@ function breadcrumbs(ancestors) {
     const link = el("a", { href: `?n=${a.id}`, class: "crumb-link" });
     link.appendChild(crumbEl);
     wireNavClick(link, a.id);
-    bar.appendChild(link);
-    bar.appendChild(el("span", { class: "crumb-sep", text: "›" }));
+    itemsWrap.appendChild(link);
+    itemsWrap.appendChild(el("span", { class: "crumb-sep", text: "›" }));
   }
+}
+
+// Grows head/tail from the minimum until adding one more would overflow the
+// available width, instead of always eliding down to a fixed count -- a wide
+// window should show as much of the trail as actually fits. Measures against
+// `bar` (which also contains the "+ New"/"Import..." actions) but only ever
+// rebuilds `itemsWrap`'s contents, so those actions are never destroyed.
+function fitCrumbBar(bar, itemsWrap, ancestors, nodeId) {
+  const container = bar.parentElement;
+  if (!container) return;
+  const maxWidth = container.clientWidth;
+  let head = CRUMB_MIN_HEAD;
+  let tail = CRUMB_MIN_TAIL;
+  while (head + tail < ancestors.length && bar.scrollWidth <= maxWidth) {
+    const prevHead = head, prevTail = tail;
+    head++;
+    if (head + tail < ancestors.length) tail++;
+    renderCrumbItems(itemsWrap, sliceWithEllipsis(ancestors, head, tail), nodeId);
+    if (bar.scrollWidth > maxWidth) {
+      head = prevHead;
+      tail = prevTail;
+      renderCrumbItems(itemsWrap, sliceWithEllipsis(ancestors, head, tail), nodeId);
+      break;
+    }
+  }
+}
+
+function breadcrumbs(ancestors, nodeId) {
+  const bar = el("div", { class: "crumbs" });
+  const itemsWrap = el("div", { class: "crumb-items" });
+  bar.appendChild(itemsWrap);
+  if (expandedCrumbsFor === nodeId) {
+    bar.classList.add("expanded");
+    renderCrumbItems(itemsWrap, ancestors, nodeId);
+    return bar;
+  }
+  if (ancestors.length <= CRUMB_MIN_HEAD + CRUMB_MIN_TAIL + 1) {
+    renderCrumbItems(itemsWrap, ancestors, nodeId);
+    return bar;
+  }
+  // starts minimally abbreviated; grown to fit once actually laid out (can't
+  // measure width before the bar is attached to the document)
+  renderCrumbItems(itemsWrap, sliceWithEllipsis(ancestors, CRUMB_MIN_HEAD, CRUMB_MIN_TAIL), nodeId);
+  requestAnimationFrame(() => fitCrumbBar(bar, itemsWrap, ancestors, nodeId));
   return bar;
 }
 
@@ -1190,7 +1246,7 @@ async function buildDetailPanel(focusId, knownModels) {
     // of typing from scratch is most likely wanted (this is what the "nothing
     // happens" INBOX report turned out to be: these buttons simply weren't
     // rendered at all on the "+ New" screen, an early-return oversight)
-    const crumbBar = breadcrumbs([]);
+    const crumbBar = breadcrumbs([], "new");
     const crumbActions = el("div", { class: "crumb-actions" });
     crumbActions.appendChild(newRootLink());
     crumbActions.appendChild(importRootLink());
@@ -1216,7 +1272,7 @@ async function buildDetailPanel(focusId, knownModels) {
     api.get(`/api/nodes/${focusId}/ancestors`),
   ]);
 
-  const crumbBar = breadcrumbs(ancestors.slice(0, -1));
+  const crumbBar = breadcrumbs(ancestors.slice(0, -1), focusId);
   const crumbActions = el("div", { class: "crumb-actions" });
   crumbActions.appendChild(newRootLink());
   crumbActions.appendChild(importRootLink());
