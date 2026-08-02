@@ -349,18 +349,19 @@ function getKeywordFilter() {
 function setKeywordFilter(v) {
   sessionStorage.setItem("breederV2FilterKeyword", v);
 }
-function getMinDescendantDepth() {
-  const stored = parseInt(sessionStorage.getItem("breederV2FilterMinDepth"), 10);
+function getMinDescendantCount() {
+  const stored = parseInt(sessionStorage.getItem("breederV2FilterMinDescendants"), 10);
   return isNaN(stored) ? 0 : stored;
 }
-function setMinDescendantDepth(v) {
-  sessionStorage.setItem("breederV2FilterMinDepth", String(v));
+function setMinDescendantCount(v) {
+  sessionStorage.setItem("breederV2FilterMinDescendants", String(v));
 }
 
-// depth 0 = no children (never bred further), 1 = has a child but no
-// grandchild, 2 = has a grandchild but no great-grandchild, and so on --
-// the longest chain of descendants below this node
-function computeDescendantDepths(allNodes) {
+// total size of the subtree below this node -- children, grandchildren, and
+// so on, all counted (not just the longest chain, unlike the old depth
+// filter this replaces: two shallow-but-wide branches can easily have more
+// total descendants than one long thin one)
+function computeDescendantCounts(allNodes) {
   const childrenOf = new Map();
   for (const n of allNodes) {
     if (!n.parent_id) continue;
@@ -368,15 +369,15 @@ function computeDescendantDepths(allNodes) {
     childrenOf.get(n.parent_id).push(n);
   }
   const cache = new Map();
-  function depth(id) {
+  function count(id) {
     if (cache.has(id)) return cache.get(id);
     const kids = childrenOf.get(id) || [];
-    const d = kids.length === 0 ? 0 : 1 + Math.max(...kids.map((k) => depth(k.id)));
-    cache.set(id, d);
-    return d;
+    const c = kids.reduce((sum, k) => sum + 1 + count(k.id), 0);
+    cache.set(id, c);
+    return c;
   }
   const result = new Map();
-  for (const n of allNodes) result.set(n.id, depth(n.id));
+  for (const n of allNodes) result.set(n.id, count(n.id));
   return result;
 }
 
@@ -392,16 +393,16 @@ function buildBrowserPanel(allNodes, focusId) {
   const panel = el("div", { class: "browser-panel" });
   panel.appendChild(el("h2", { text: "Breeder Studio" }));
 
-  const depths = computeDescendantDepths(allNodes);
+  const descendantCounts = computeDescendantCounts(allNodes);
   const viewedIds = getViewedNodeIds();
   const grid = el("div", { class: "thumb-grid" });
 
   function renderGrid() {
     const keyword = keywordInput.value;
-    const minDepth = parseInt(depthSelect.value, 10) || 0;
+    const minDescendants = parseInt(minDescendantsInput.value, 10) || 0;
     grid.replaceChildren();
     for (const node of allNodes) {
-      if (minDepth > 0 && (depths.get(node.id) || 0) < minDepth) continue;
+      if (minDescendants > 0 && (descendantCounts.get(node.id) || 0) < minDescendants) continue;
       if (!nodeMatchesKeyword(node, keyword)) continue;
       grid.appendChild(thumbCard(node, node.id === focusId, viewedIds));
     }
@@ -435,19 +436,23 @@ function buildBrowserPanel(allNodes, focusId) {
   keywordWrap.appendChild(keywordInput);
   keywordWrap.appendChild(keywordClear);
 
-  const depthSelect = el("select");
-  depthSelect.appendChild(el("option", { value: "0", text: "any depth" }));
-  for (let i = 1; i <= 5; i++) {
-    depthSelect.appendChild(el("option", { value: String(i), text: `${i}+ descendants deep` }));
-  }
-  depthSelect.value = String(getMinDescendantDepth());
-  depthSelect.addEventListener("change", () => {
-    setMinDescendantDepth(parseInt(depthSelect.value, 10) || 0);
+  // a plain number input rather than a preset dropdown: total descendant
+  // count has no natural small ceiling the way chain-depth did (a widely-bred
+  // lineage can easily rack up dozens or hundreds), so a fixed list of
+  // thresholds would either be too coarse or need constant retuning
+  const descendantsWrap = el("div", { class: "descendants-filter-wrap" });
+  descendantsWrap.appendChild(el("span", { class: "filter-label", text: "min descendants" }));
+  const minDescendantsInput = el("input", { type: "number", min: "0", step: "1" });
+  minDescendantsInput.value = String(getMinDescendantCount());
+  minDescendantsInput.title = "only show items with at least this many total descendants (children, grandchildren, etc.)";
+  minDescendantsInput.addEventListener("input", () => {
+    setMinDescendantCount(parseInt(minDescendantsInput.value, 10) || 0);
     renderGrid();
   });
+  descendantsWrap.appendChild(minDescendantsInput);
 
   filterBar.appendChild(keywordWrap);
-  filterBar.appendChild(depthSelect);
+  filterBar.appendChild(descendantsWrap);
   panel.appendChild(filterBar);
 
   renderGrid();
