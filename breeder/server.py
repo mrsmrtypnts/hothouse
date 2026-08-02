@@ -127,7 +127,7 @@ class VariationsRequest(BaseModel):
     reroll_probability: float = 0.5
     keyword_intensity: float = 1.0
     lora_intensity: float = 1.0
-    other_intensity: float = 1.0
+    other_intensity: float = 0.5
     # ephemeral override for the base spec (new UI's edited form) -- never
     # written back to the parent node's stored spec
     spec: Optional[dict] = None
@@ -191,6 +191,16 @@ def _lora_names_in(spec: dict) -> list[str]:
     return names
 
 
+def _model_names_in(spec: dict) -> list[str]:
+    name = spec.get("model_name")
+    return [name] if name else []
+
+
+def _record_reliability(spec: dict, success: bool, error: Optional[str] = None) -> None:
+    reliability.record("lora", _lora_names_in(spec), success=success, error=error)
+    reliability.record("model", _model_names_in(spec), success=success, error=error)
+
+
 async def _render_node(
     node_id: str,
     spec: dict,
@@ -217,10 +227,10 @@ async def _render_node(
             filename = api_filename or _image_filename(node_id, spec)
             (config.IMAGE_DIR / filename).write_bytes(image_bytes)
         await store.mark_done(node_id, filename)
-        reliability.record(_lora_names_in(spec), success=True)
+        _record_reliability(spec, success=True)
     except Exception as exc:
         await store.mark_error(node_id, str(exc))
-        reliability.record(_lora_names_in(spec), success=False, error=str(exc))
+        _record_reliability(spec, success=False, error=str(exc))
 
 
 @app.post("/api/root")
@@ -423,8 +433,8 @@ async def get_corpus_summary():
     return corpus.summary()
 
 
-@app.get("/api/lora-health")
-async def get_lora_health():
+@app.get("/api/asset-health")
+async def get_asset_health():
     return reliability.summary()
 
 
@@ -449,10 +459,10 @@ async def recover_orphaned_renders() -> None:
             filename = api_filename or _image_filename(node["id"], node["spec"])
             (config.IMAGE_DIR / filename).write_bytes(image_bytes)
             await store.mark_done(node["id"], filename)
-            reliability.record(_lora_names_in(node["spec"]), success=True)
+            _record_reliability(node["spec"], success=True)
         except Exception as exc:
             await store.mark_error(node["id"], str(exc))
-            reliability.record(_lora_names_in(node["spec"]), success=False, error=str(exc))
+            _record_reliability(node["spec"], success=False, error=str(exc))
 
 
 app.mount("/images", StaticFiles(directory=str(config.IMAGE_DIR)), name="images")

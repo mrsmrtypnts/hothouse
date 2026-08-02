@@ -31,22 +31,30 @@ def _names_blamed_by_error(names: list[str], error: str) -> list[str]:
     return [n for n in names if n.lower() in error_lower]
 
 
-def record(lora_names: list[str], success: bool, error: Optional[str] = None) -> None:
-    if not lora_names:
+def _key(kind: str, name: str) -> str:
+    return f"{kind}:{name}"
+
+
+def record(kind: str, names: list[str], success: bool, error: Optional[str] = None) -> None:
+    """kind is "lora" or "model" -- tracked in the same store (kept separate
+    from corpus.json, see above) but namespaced so a lora and a model can
+    never collide on the same name."""
+    if not names:
         return
     if success:
-        blamed = lora_names
+        blamed = names
     else:
-        # only count a failure against the lora(s) the API error actually
-        # names -- otherwise one genuinely-broken lora would eventually drag
-        # down every innocent lora it happens to get randomly paired with
-        blamed = _names_blamed_by_error(lora_names, error or "")
+        # only count a failure against the asset(s) the API error actually
+        # names -- otherwise one genuinely-broken lora/model would eventually
+        # drag down every innocent one it happens to get randomly paired with
+        blamed = _names_blamed_by_error(names, error or "")
         if not blamed:
             return
     now = datetime.now(timezone.utc).isoformat()
     for name in blamed:
         entry = _state.setdefault(
-            name, {"attempts": 0, "failures": 0, "last_error": None, "last_seen": None}
+            _key(kind, name),
+            {"kind": kind, "name": name, "attempts": 0, "failures": 0, "last_error": None, "last_seen": None},
         )
         entry["attempts"] += 1
         if not success:
@@ -56,18 +64,20 @@ def record(lora_names: list[str], success: bool, error: Optional[str] = None) ->
     _save()
 
 
-def is_unreliable(name: str) -> bool:
-    entry = _state.get(name)
-    if not entry or entry["attempts"] < MIN_ATTEMPTS:
-        return False
-    return entry["failures"] / entry["attempts"] >= FAILURE_RATE_THRESHOLD
+def _is_unreliable_entry(entry: dict) -> bool:
+    return entry["attempts"] >= MIN_ATTEMPTS and entry["failures"] / entry["attempts"] >= FAILURE_RATE_THRESHOLD
 
 
-def unreliable_names() -> set[str]:
-    return {name for name in _state if is_unreliable(name)}
+def is_unreliable(kind: str, name: str) -> bool:
+    entry = _state.get(_key(kind, name))
+    return bool(entry) and _is_unreliable_entry(entry)
+
+
+def unreliable_names(kind: str) -> set[str]:
+    return {entry["name"] for entry in _state.values() if entry.get("kind") == kind and _is_unreliable_entry(entry)}
 
 
 def summary() -> list[dict]:
-    rows = [{"name": name, **entry, "unreliable": is_unreliable(name)} for name, entry in _state.items()]
+    rows = [{**entry, "unreliable": _is_unreliable_entry(entry)} for entry in _state.values()]
     rows.sort(key=lambda r: (-r["failures"], -r["attempts"]))
     return rows

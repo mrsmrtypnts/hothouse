@@ -112,7 +112,12 @@ def _swap_model(spec: dict) -> str:
     current = spec.get("model_name", "")
     # corpus-informed rather than a fixed list (unlike _swap_sampler) --
     # there's no built-in universe of valid model names/hashes to pick from
-    candidates = [(name, model_hash) for name, model_hash, _count in corpus.top_models() if name != current]
+    unreliable = reliability.unreliable_names("model")
+    candidates = [
+        (name, model_hash)
+        for name, model_hash, _count in corpus.top_models()
+        if name != current and name not in unreliable
+    ]
     if not candidates:
         return _nudge_steps(spec)
     name, model_hash = random.choice(candidates)
@@ -227,7 +232,7 @@ def _remove_keyword(spec: dict) -> str:
 
 def _add_learned_lora(spec: dict) -> str:
     existing = _existing_names(spec.get("prompt", ""))
-    unreliable = reliability.unreliable_names()
+    unreliable = reliability.unreliable_names("lora")
     candidates = [c for c in corpus.top_loras(existing) if c[0] not in unreliable]
     if not candidates:
         return _nudge_lora_weight(spec)
@@ -374,7 +379,7 @@ def generate_children(
     reroll_probability: float = 1.0,
     keyword_intensity: float = 1.0,
     lora_intensity: float = 1.0,
-    other_intensity: float = 1.0,
+    other_intensity: float = 0.5,
 ) -> list[tuple[dict, str]]:
     children: list[tuple[dict, str]] = []
     seen: set[str] = set()
