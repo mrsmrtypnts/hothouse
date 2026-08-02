@@ -323,7 +323,7 @@ button:disabled { opacity: 0.5; cursor: default; }
   line-height: 1.5;
   color: var(--text);
   white-space: pre-wrap;
-  overflow: auto;
+  overflow: hidden;
   pointer-events: none;
 }
 .diff-added, .diff-increased { color: #7ed992; }

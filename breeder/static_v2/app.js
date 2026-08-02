@@ -1237,6 +1237,17 @@ function wrapFieldWithDiff(inputEl, parentText, currentText, isDismissed, dismis
       dismissOverlay();
       inputEl.focus();
     });
+    // the overlay is pointer-events:none specifically so clicks/hover pass
+    // through to inputEl (see the block comment above) -- which means wheel
+    // scrolling over the field already scrolls the real (hidden) textarea,
+    // but the visible overlay never followed, so any diff-colored content
+    // past the fold was reachable by scrolling yet impossible to actually
+    // see. Mirror inputEl's scroll position onto the overlay to fix that,
+    // without touching the focus-to-dismiss behavior at all.
+    inputEl.addEventListener("scroll", () => {
+      overlay.scrollTop = inputEl.scrollTop;
+      overlay.scrollLeft = inputEl.scrollLeft;
+    });
     wrap.appendChild(overlay);
     inputEl.addEventListener("input", dismissOverlay, { once: true });
   }
