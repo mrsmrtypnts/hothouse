@@ -69,6 +69,35 @@ button:disabled { opacity: 0.5; cursor: default; }
 }
 .splitter:hover, .splitter.dragging { background: var(--accent); }
 
+.browser-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 16px; }
+.browser-header h2 { margin: 0; }
+.corpus-toggle-btn { font-size: 12px; padding: 4px 10px; }
+
+.corpus-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  background: var(--bg-panel-alt);
+}
+.corpus-status { font-size: 13px; color: var(--text-dim); }
+.corpus-paths { font-size: 12px; color: var(--text-faint); word-break: break-all; }
+.corpus-rescan-btn { font-size: 12px; padding: 4px 10px; }
+
+.corpus-warning {
+  font-size: 12px;
+  color: #e0a355;
+  border: 1px solid #5a4326;
+  background: rgba(224, 163, 85, 0.08);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  line-height: 1.4;
+}
+
 .filter-bar {
   display: flex;
   gap: 8px;

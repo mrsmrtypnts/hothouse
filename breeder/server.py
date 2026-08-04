@@ -72,12 +72,28 @@ async def _print_access_url() -> None:
         threading.Timer(0.5, lambda: webbrowser.open(url)).start()
 
 
+async def _rescan_corpus_if_configured() -> None:
+    paths = corpus.current_paths()
+    if paths:
+        await asyncio.to_thread(corpus.scan, paths)
+
+
 @app.on_event("startup")
 async def _auto_scan_corpus() -> None:
-    # bootstrap default for a fresh install only -- once any scan has ever run,
-    # config.CORPUS_PATH exists and this is skipped every time after
-    if config.CORPUS_DIRS and not config.CORPUS_PATH.exists():
-        await asyncio.to_thread(corpus.scan, config.CORPUS_DIRS)
+    # rescans on every startup (not just the first ever) so a long-lived
+    # instance picks up new files added to an external/permanent collection
+    # since the last run, not just at first install
+    await _rescan_corpus_if_configured()
+
+
+@app.on_event("startup")
+async def _periodic_corpus_rescan() -> None:
+    async def loop() -> None:
+        while True:
+            await asyncio.sleep(config.CORPUS_RESCAN_HOURS * 3600)
+            await _rescan_corpus_if_configured()
+
+    asyncio.create_task(loop())
 
 
 DEFAULTS = {
@@ -134,7 +150,9 @@ class VariationsRequest(BaseModel):
 
 
 class CorpusScanRequest(BaseModel):
-    paths: list[str]
+    # omitted/empty -- rescan whatever was last scanned (see corpus.current_paths),
+    # so Studio's "rescan now" button doesn't need to resend the configured paths
+    paths: list[str] = []
 
 
 def _image_filename(node_id: str, spec: dict) -> str:
@@ -425,7 +443,8 @@ async def pick_directory():
 
 @app.post("/api/corpus/scan")
 async def scan_corpus(req: CorpusScanRequest):
-    return await asyncio.to_thread(corpus.scan, req.paths)
+    paths = req.paths or corpus.current_paths()
+    return await asyncio.to_thread(corpus.scan, paths)
 
 
 @app.get("/api/corpus/summary")

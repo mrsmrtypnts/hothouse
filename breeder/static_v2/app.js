@@ -171,6 +171,10 @@ function buildSplitter(browserPanel) {
 let formSpec = null;
 let formFocusId = null;
 
+// refreshed every render() alongside allNodes/knownModels -- read by the
+// corpus panel and by the lora-mutations warning in the breed controls
+let corpusSummary = null;
+
 // whether the prompt/negative-prompt diff-vs-parent overlay has been
 // dismissed (by editing) for the current focus -- reset alongside formSpec
 // whenever focus actually changes, same lifecycle
@@ -363,6 +367,12 @@ function getMinDescendantCount() {
 function setMinDescendantCount(v) {
   sessionStorage.setItem("breederV2FilterMinDescendants", String(v));
 }
+function getCorpusPanelOpen() {
+  return sessionStorage.getItem("breederV2CorpusPanelOpen") === "1";
+}
+function setCorpusPanelOpen(v) {
+  sessionStorage.setItem("breederV2CorpusPanelOpen", v ? "1" : "0");
+}
 
 // total size of the subtree below this node -- children, grandchildren, and
 // so on, all counted (not just the longest chain, unlike the old depth
@@ -388,6 +398,35 @@ function computeDescendantCounts(allNodes) {
   return result;
 }
 
+function buildCorpusPanel() {
+  const wrap = el("div", { class: "corpus-panel" });
+  wrap.style.display = getCorpusPanelOpen() ? "" : "none";
+  const s = corpusSummary;
+
+  const status = el("div", { class: "corpus-status" });
+  if (!s || !s.scanned_at) {
+    status.textContent = "never scanned -- \"add\" lora/keyword mutations won't do anything until this runs";
+  } else {
+    const when = new Date(s.scanned_at).toLocaleString();
+    status.textContent = `${s.file_count} images, scanned ${when}`;
+  }
+  wrap.appendChild(status);
+
+  if (s && s.paths && s.paths.length) {
+    wrap.appendChild(el("div", { class: "corpus-paths", text: s.paths.join(", ") }));
+  }
+
+  const rescanBtn = el("button", { type: "button", class: "corpus-rescan-btn", text: "rescan now" });
+  rescanBtn.addEventListener("click", async () => {
+    rescanBtn.disabled = true;
+    rescanBtn.textContent = "scanning...";
+    await api.post("/api/corpus/scan", {});
+    render();
+  });
+  wrap.appendChild(rescanBtn);
+  return wrap;
+}
+
 function nodeMatchesKeyword(node, keyword) {
   if (!keyword) return true;
   const k = keyword.toLowerCase();
@@ -398,7 +437,19 @@ function nodeMatchesKeyword(node, keyword) {
 
 function buildBrowserPanel(allNodes, focusId) {
   const panel = el("div", { class: "browser-panel" });
-  panel.appendChild(el("h2", { text: "Breeder Studio" }));
+  const headerRow = el("div", { class: "browser-header" });
+  headerRow.appendChild(el("h2", { text: "Breeder Studio" }));
+  const corpusToggle = el("button", { type: "button", class: "corpus-toggle-btn", text: "corpus" });
+  headerRow.appendChild(corpusToggle);
+  panel.appendChild(headerRow);
+
+  const corpusPanel = buildCorpusPanel();
+  corpusToggle.addEventListener("click", () => {
+    const open = corpusPanel.style.display === "none";
+    corpusPanel.style.display = open ? "" : "none";
+    setCorpusPanelOpen(open);
+  });
+  panel.appendChild(corpusPanel);
 
   const descendantCounts = computeDescendantCounts(allNodes);
   const viewedIds = getViewedNodeIds();
@@ -702,6 +753,19 @@ function buildForm(spec, knownModels, parentSpec) {
 
   const samplerInput = el("input", { type: "text", list: "sampler-options" });
   samplerInput.value = formSpec.sampler_name || "";
+  // datalist suggestions are filtered by the browser against whatever's
+  // already typed -- with the field pre-filled (e.g. "Euler") that hides
+  // every other option, including the default. Clearing on focus (and
+  // showing the old value as a placeholder) surfaces the full list; blur
+  // restores it if nothing was picked/typed.
+  samplerInput.addEventListener("focus", () => {
+    samplerInput.dataset.prevValue = samplerInput.value;
+    samplerInput.placeholder = samplerInput.value;
+    samplerInput.value = "";
+  });
+  samplerInput.addEventListener("blur", () => {
+    if (!samplerInput.value) samplerInput.value = samplerInput.dataset.prevValue || "";
+  });
   samplerInput.addEventListener("input", () => { formSpec.sampler_name = samplerInput.value; });
   const datalist = el("datalist", { id: "sampler-options" });
   for (const s of SAMPLERS) datalist.appendChild(el("option", { value: s }));
@@ -768,6 +832,14 @@ function buildRerollField() {
   return { wrap, slider };
 }
 
+function buildLoraCorpusWarning() {
+  if (!corpusSummary || corpusSummary.file_count > 0) return null;
+  return el("div", {
+    class: "corpus-warning",
+    text: "No learned corpus scanned yet -- lora \"add\" mutations will silently no-op, so this slider will mostly remove loras rather than balancing adds and removes. Scan a corpus (\"corpus\" button above) to fix this.",
+  });
+}
+
 function buildIntensityField(label, getValue, setValue) {
   const wrap = el("div", { class: "slider-row" });
   wrap.appendChild(el("span", { class: "field-label", text: label }));
@@ -818,6 +890,8 @@ function buildBreedControls(node) {
   sliderStack.appendChild(reroll.wrap);
   sliderStack.appendChild(keywordIntensity.wrap);
   sliderStack.appendChild(loraIntensity.wrap);
+  const loraWarning = buildLoraCorpusWarning();
+  if (loraWarning) sliderStack.appendChild(loraWarning);
   sliderStack.appendChild(otherIntensity.wrap);
 
   let mode = getMode();
@@ -885,6 +959,8 @@ function buildFreshBreedControls() {
   sliderStack.appendChild(reroll.wrap);
   sliderStack.appendChild(keywordIntensity.wrap);
   sliderStack.appendChild(loraIntensity.wrap);
+  const loraWarning = buildLoraCorpusWarning();
+  if (loraWarning) sliderStack.appendChild(loraWarning);
   sliderStack.appendChild(otherIntensity.wrap);
 
   const breedBtn = el("button", { class: "btn-breed", text: "Breed" });
@@ -1393,10 +1469,12 @@ async function render(isPoll = false) {
   // rebuild silently drops it back to the CSS default. Carry it over by hand.
   const prevPromptHeight = document.querySelector(".field-prompt-main")?.style.height || null;
   const prevNegHeight = document.querySelector(".field-prompt-neg")?.style.height || null;
-  const [allNodes, knownModels] = await Promise.all([
+  const [allNodes, knownModels, corpusSummaryResult] = await Promise.all([
     api.get("/api/nodes"),
     api.get("/api/models"),
+    api.get("/api/corpus/summary"),
   ]);
+  corpusSummary = corpusSummaryResult;
   let focusId = currentNodeId();
   if (focusId !== "new" && (!focusId || !allNodes.some((n) => n.id === focusId))) {
     focusId = allNodes.length ? allNodes[0].id : "new";

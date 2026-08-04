@@ -17,6 +17,8 @@ DEFAULT_MODEL_NAME = "ponyDiffusionV6XL_v6.safetensors"
 DEFAULT_MODEL_HASH = "67ab2fd8ec"
 PORT = int(os.environ.get("BREEDER_PORT", "8731"))
 CORPUS_DIRS = [p.strip() for p in os.environ.get("BREEDER_CORPUS_DIRS", "").split(",") if p.strip()]
+# entries may be glob patterns (e.g. "/Volumes/Archive/keepers/*/final"), not just plain dirs -- see corpus._expand_dirs
+CORPUS_RESCAN_HOURS = float(os.environ.get("BREEDER_CORPUS_RESCAN_HOURS", "3"))
 
 # ~/.local/share, not /tmp -- on macOS the system tempdir isn't scoped to this
 # account, so generated images and prompts would otherwise be exposed to
