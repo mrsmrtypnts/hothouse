@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+
+set -e
+
+AUDIO_MODE=reverse
+INPUTS=()
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --audio)
+      AUDIO_MODE="$2"
+      shift 2
+      ;;
+    --audio=*)
+      AUDIO_MODE="${1#*=}"
+      shift
+      ;;
+    -*)
+      echo "Unknown option: $1" >&2
+      exit 1
+      ;;
+    *)
+      INPUTS+=("$1")
+      shift
+      ;;
+  esac
+done
+
+INPUT="${INPUTS[0]}"
+if [[ -z "$INPUT" ]]; then
+  echo "Usage: $0 [--audio reverse|forward|none] <input.mp4>" >&2
+  exit 1
+fi
+
+if [[ ! -f "$INPUT" ]]; then
+  echo "Error: file not found: $INPUT" >&2
+  exit 1
+fi
+
+if [[ "$AUDIO_MODE" != "reverse" && "$AUDIO_MODE" != "forward" && "$AUDIO_MODE" != "none" ]]; then
+  echo "Error: --audio must be 'reverse', 'forward', or 'none'" >&2
+  exit 1
+fi
+
+BASENAME="${INPUT%.*}"
+EXT="${INPUT##*.}"
+
+# Parse optional time suffix (e.g. "foo 0'30\".mp4" → NAME="foo", TIME=" 0'30\"")
+TIME_SUFFIX=""
+NAME_WITHOUT_TIME="$BASENAME"
+if [[ "$BASENAME" =~ ^(.*[[:space:]])([0-9]+"'"[0-9]+"\"")$ ]]; then
+  NAME_WITHOUT_TIME="${BASH_REMATCH[1]}"
+  NAME_WITHOUT_TIME="${NAME_WITHOUT_TIME%" "}"
+  ORIG_TIME="${BASH_REMATCH[2]}"
+  # Double the duration
+  if [[ "$ORIG_TIME" =~ ^([0-9]+)"'"([0-9]+)\"$ ]]; then
+    MINS=${BASH_REMATCH[1]}
+    SECS=${BASH_REMATCH[2]}
+    NEW_TOTAL=$(( (MINS * 60 + SECS) * 2 ))
+    NEW_MINS=$(( NEW_TOTAL / 60 ))
+    NEW_SECS=$(( NEW_TOTAL % 60 ))
+    TIME_SUFFIX=" ${NEW_MINS}'$(printf '%02d' "$NEW_SECS")\""
+  fi
+fi
+
+OUTPUT="${NAME_WITHOUT_TIME} boomerang${TIME_SUFFIX}.${EXT}"
+
+HAS_AUDIO=$(ffprobe -v quiet -select_streams a:0 -show_entries stream=codec_type -of csv=p=0 "$INPUT")
+
+# Resolve effective audio mode: fall back to none if no audio track
+if [[ -z "$HAS_AUDIO" ]]; then
+  EFF_AUDIO=none
+else
+  EFF_AUDIO="$AUDIO_MODE"
+fi
+
+echo "Creating boomerang: $OUTPUT (audio: $EFF_AUDIO)"
+
+if [[ "$EFF_AUDIO" == "reverse" ]]; then
+  ffmpeg -y -i "$INPUT" \
+    -filter_complex "[0:v]reverse[rv];[0:a]areverse[ra];[0:v][0:a][rv][ra]concat=n=2:v=1:a=1[v][a]" \
+    -map "[v]" -map "[a]" \
+    -c:v libx264 -crf 18 -preset fast -c:a aac \
+    "$OUTPUT"
+elif [[ "$EFF_AUDIO" == "forward" ]]; then
+  ffmpeg -y -i "$INPUT" \
+    -filter_complex "[0:v]reverse[rv];[0:v][0:a][rv][0:a]concat=n=2:v=1:a=1[v][a]" \
+    -map "[v]" -map "[a]" \
+    -c:v libx264 -crf 18 -preset fast -c:a aac \
+    "$OUTPUT"
+else
+  ffmpeg -y -i "$INPUT" \
+    -filter_complex "[0:v]reverse[rv];[0:v][rv]concat=n=2:v=1:a=0[v]" \
+    -map "[v]" \
+    -c:v libx264 -crf 18 -preset fast \
+    "$OUTPUT"
+fi
+
+echo "Done: $OUTPUT"

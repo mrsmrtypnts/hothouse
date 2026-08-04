@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+
+if [[ -z "$1" ]]; then
+  echo "Usage: $0 <directory>"
+  exit 1
+fi
+
+find "$1" -name "*.mp4" | while IFS= read -r f; do
+  dims=$(ffprobe -v quiet -select_streams v:0 -show_entries stream=width,height -of csv=p=0 "$f")
+  w=$(echo "$dims" | cut -d',' -f1)
+  h=$(echo "$dims" | cut -d',' -f2)
+  if [[ -n "$w" && -n "$h" && "$h" -gt "$w" ]]; then
+    echo "$f"
+  fi
+done

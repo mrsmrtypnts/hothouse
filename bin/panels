@@ -1,0 +1,419 @@
+#!/usr/bin/env bash
+
+set -e
+
+# ---------------------------------------------------------------------------
+# panels — create a 1-, 2-, or 3-panel round-canon video (16:9 output)
+#
+# Usage:
+#   panels [--panels 1|2|3] [--audio keep|all|none] <input1.mp4> [input2.mp4 ...]
+#
+# Options:
+#   --panels N        Number of panels: 1, 2, or 3 (default: 3)
+#   --audio MODE      Audio handling: keep (default), all, or none
+#                       keep — single track from panel A (the original)
+#                       all  — blend audio from all panels (amix)
+#                       none — strip all audio
+#
+# Panel layout:
+#   1-panel: A          — original, cropped to 16:9
+#   2-panel: A | B      — A=original, B=offset +1/2
+#   3-panel: A | B | C  — A=original, B=offset +1/3, C=offset +2/3
+# ---------------------------------------------------------------------------
+
+PANELS=3
+AUDIO_MODE=keep
+INPUTS=()
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --panels)
+      PANELS="$2"
+      shift 2
+      ;;
+    --panels=*)
+      PANELS="${1#*=}"
+      shift
+      ;;
+    --audio)
+      AUDIO_MODE="$2"
+      shift 2
+      ;;
+    --audio=*)
+      AUDIO_MODE="${1#*=}"
+      shift
+      ;;
+    -*)
+      echo "Unknown option: $1" >&2
+      exit 1
+      ;;
+    *)
+      INPUTS+=("$1")
+      shift
+      ;;
+  esac
+done
+
+if [[ ${#INPUTS[@]} -eq 0 ]]; then
+  echo "Usage: $0 [--panels 1|2|3] [--audio keep|all|none] <input1.mp4> [input2.mp4 ...]" >&2
+  exit 1
+fi
+
+if [[ "$PANELS" != "1" && "$PANELS" != "2" && "$PANELS" != "3" ]]; then
+  echo "Error: --panels must be 1, 2, or 3" >&2
+  exit 1
+fi
+
+if [[ "$AUDIO_MODE" != "keep" && "$AUDIO_MODE" != "all" && "$AUDIO_MODE" != "none" ]]; then
+  echo "Error: --audio must be 'keep', 'all', or 'none'" >&2
+  exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# Output filename construction
+# Based on first input filename, insert "1panel"/"2panel"/"3panel" before
+# time suffix. Time suffix pattern: something like 1'35" at end of base name.
+# ---------------------------------------------------------------------------
+FIRST_INPUT="${INPUTS[0]}"
+FIRST_BASE="${FIRST_INPUT%.*}"
+PANEL_LABEL="${PANELS}panel"
+
+TIME_SUFFIX=""
+NAME_WITHOUT_TIME="$FIRST_BASE"
+if [[ "$FIRST_BASE" =~ ^(.*[[:space:]])([0-9]+"'"[0-9]+"\"")$ ]]; then
+  NAME_WITHOUT_TIME="${BASH_REMATCH[1]}"
+  NAME_WITHOUT_TIME="${NAME_WITHOUT_TIME%" "}"
+  TIME_SUFFIX=" ${BASH_REMATCH[2]}"
+fi
+
+OUTPUT="${NAME_WITHOUT_TIME} ${PANEL_LABEL}${TIME_SUFFIX}.mp4"
+
+TMPDIR=$(mktemp -d)
+
+echo "Output will be: $OUTPUT"
+echo "Audio mode: $AUDIO_MODE"
+
+# ---------------------------------------------------------------------------
+# Probe helpers
+# ---------------------------------------------------------------------------
+probe_width()    { ffprobe -v quiet -select_streams v:0 -show_entries stream=width    -of csv=p=0 "$1"; }
+probe_height()   { ffprobe -v quiet -select_streams v:0 -show_entries stream=height   -of csv=p=0 "$1"; }
+probe_fps()      { ffprobe -v quiet -select_streams v:0 -show_entries stream=r_frame_rate -of csv=p=0 "$1"; }
+probe_vcodec()   { ffprobe -v quiet -select_streams v:0 -show_entries stream=codec_name -of csv=p=0 "$1"; }
+probe_acodec()   { ffprobe -v quiet -select_streams a:0 -show_entries stream=codec_name -of csv=p=0 "$1"; }
+probe_duration() { ffprobe -v quiet -show_entries format=duration -of csv=p=0 "$1"; }
+probe_has_audio(){ ffprobe -v quiet -select_streams a:0 -show_entries stream=codec_type -of csv=p=0 "$1"; }
+
+# ---------------------------------------------------------------------------
+# If multiple inputs: check compatibility, concatenate
+# ---------------------------------------------------------------------------
+if [[ ${#INPUTS[@]} -gt 1 ]]; then
+  echo "Multiple inputs detected — checking compatibility..."
+
+  # Find most common resolution among inputs
+  declare -A RES_COUNT
+  for f in "${INPUTS[@]}"; do
+    W=$(probe_width "$f")
+    H=$(probe_height "$f")
+    KEY="${W}x${H}"
+    RES_COUNT[$KEY]=$(( ${RES_COUNT[$KEY]:-0} + 1 ))
+  done
+
+  BEST_RES=""
+  BEST_COUNT=0
+  for KEY in "${!RES_COUNT[@]}"; do
+    if [[ ${RES_COUNT[$KEY]} -gt $BEST_COUNT ]]; then
+      BEST_COUNT=${RES_COUNT[$KEY]}
+      BEST_RES=$KEY
+    fi
+  done
+
+  REF_W=${BEST_RES%x*}
+  REF_H=${BEST_RES#*x}
+  REF_W=$(( REF_W & ~1 ))
+  REF_H=$(( REF_H & ~1 ))
+
+  REF_FPS=$(probe_fps "${INPUTS[0]}")
+  REF_VC=$(probe_vcodec "${INPUTS[0]}")
+
+  NEED_REENCODE=0
+  MISMATCH_REASONS=()
+
+  # Helper: index of the first stream of a given type (v or a)
+  first_stream_index() { ffprobe -v quiet -select_streams "$2" -show_entries stream=index -of csv=p=0 "$1" | head -1; }
+
+  for f in "${INPUTS[@]}"; do
+    W=$(probe_width  "$f")
+    H=$(probe_height "$f")
+    FPS=$(probe_fps  "$f")
+    VC=$(probe_vcodec "$f")
+    VSTREAMS=$(ffprobe -v quiet -select_streams v -show_entries stream=index -of csv=p=0 "$f" | wc -l | tr -d ' ')
+    VI=$(first_stream_index "$f" v)
+    AI=$(first_stream_index "$f" a)
+
+    [[ "$W" != "$REF_W" || "$H" != "$REF_H" ]] && MISMATCH_REASONS+=("resolution mismatch: ${REF_W}x${REF_H} vs ${W}x${H} in $f") && NEED_REENCODE=1
+    [[ "$FPS" != "$REF_FPS" ]] && MISMATCH_REASONS+=("frame rate mismatch: $REF_FPS vs $FPS in $f") && NEED_REENCODE=1
+    [[ "$VC"  != "$REF_VC"  ]] && MISMATCH_REASONS+=("video codec mismatch: $REF_VC vs $VC in $f")  && NEED_REENCODE=1
+    [[ $VSTREAMS -gt 1 ]]      && MISMATCH_REASONS+=("extra video streams ($VSTREAMS) in $f")         && NEED_REENCODE=1
+    # Non-standard stream order: expect video before audio (video index < audio index)
+    [[ -n "$AI" && "$VI" -gt "$AI" ]] && MISMATCH_REASONS+=("audio-first stream order in $f") && NEED_REENCODE=1
+  done
+
+  if [[ $NEED_REENCODE -eq 1 ]]; then
+    echo ""
+    echo "WARNING: Input files need normalization:"
+    for r in "${MISMATCH_REASONS[@]}"; do
+      echo "  - $r"
+    done
+    echo ""
+    echo "Re-encoding all inputs to a common format (libx264, fps=${REF_FPS}, ${REF_W}x${REF_H}, video-first stream order)..."
+
+    NORMALIZED=()
+    for i in "${!INPUTS[@]}"; do
+      OUT_NORM="$TMPDIR/norm_${i}.mp4"
+      HAS_A=$(probe_has_audio "${INPUTS[$i]}")
+      if [[ -n "$HAS_A" ]]; then
+        AUDIO_MAPS=(-map 0:a:0 -c:a aac -ar 44100 -ac 2)
+      else
+        AUDIO_MAPS=()
+      fi
+      ffmpeg -y -i "${INPUTS[$i]}" \
+        -map 0:v:0 "${AUDIO_MAPS[@]}" \
+        -vf "scale=${REF_W}:${REF_H}:force_original_aspect_ratio=increase,crop=${REF_W}:${REF_H},fps=${REF_FPS}" \
+        -c:v libx264 -crf 18 -preset fast \
+        "$OUT_NORM"
+      NORMALIZED+=("$OUT_NORM")
+    done
+    INPUTS=("${NORMALIZED[@]}")
+  fi
+
+  # Check audio situation
+  AUDIO_FLAGS=()
+  for f in "${INPUTS[@]}"; do
+    AUDIO_FLAGS+=("$(probe_has_audio "$f")")
+  done
+
+  ANY_AUDIO=0
+  ALL_AUDIO=1
+  for flag in "${AUDIO_FLAGS[@]}"; do
+    [[ -n "$flag" ]] && ANY_AUDIO=1 || ALL_AUDIO=0
+  done
+
+  if [[ $ANY_AUDIO -eq 1 && $ALL_AUDIO -eq 0 ]]; then
+    echo "Note: Some inputs lack audio — padding with silence."
+    PADDED=()
+    for i in "${!INPUTS[@]}"; do
+      f="${INPUTS[$i]}"
+      if [[ -z "${AUDIO_FLAGS[$i]}" ]]; then
+        PADDED_OUT="$TMPDIR/padded_${i}.mp4"
+        DUR=$(probe_duration "$f")
+        ffmpeg -y -i "$f" \
+               -f lavfi -i "anullsrc=sample_rate=44100:channel_layout=stereo,atrim=duration=${DUR}" \
+               -c:v copy -c:a aac \
+               "$PADDED_OUT"
+        PADDED+=("$PADDED_OUT")
+      else
+        PADDED+=("$f")
+      fi
+    done
+    INPUTS=("${PADDED[@]}")
+  fi
+
+  CONCAT_LIST="$TMPDIR/concat_inputs.txt"
+  > "$CONCAT_LIST"
+  for f in "${INPUTS[@]}"; do
+    REALPATH=$(realpath "${f}")
+    ESCAPED="${REALPATH//\'/\'\\\'\'}"
+    echo "file '${ESCAPED}'" >> "$CONCAT_LIST"
+  done
+
+  COMBINED="$TMPDIR/combined.mp4"
+  echo "Concatenating ${#INPUTS[@]} inputs..."
+  if [[ $ANY_AUDIO -eq 1 ]]; then
+    ffmpeg -y -f concat -safe 0 -i "$CONCAT_LIST" -map 0:v:0 -map 0:a:0 -c copy "$COMBINED"
+  else
+    ffmpeg -y -f concat -safe 0 -i "$CONCAT_LIST" -map 0:v:0 -c copy "$COMBINED"
+  fi
+
+  SOURCE="$COMBINED"
+else
+  SOURCE="${INPUTS[0]}"
+fi
+
+# ---------------------------------------------------------------------------
+# Determine crop dimensions for panel aspect ratio
+#   1-panel: full 16:9
+#   2-panel: each panel is 8:9
+#   3-panel: each panel is 16:27
+# ---------------------------------------------------------------------------
+WIDTH=$(probe_width  "$SOURCE")
+HEIGHT=$(probe_height "$SOURCE")
+
+if [[ "$PANELS" -eq 1 ]]; then
+  TARGET_W=$WIDTH
+  TARGET_H=$(python3 -c "print(int($WIDTH * 9 / 16))")
+  if [[ $TARGET_H -gt $HEIGHT ]]; then
+    TARGET_H=$HEIGHT
+    TARGET_W=$(python3 -c "print(int($HEIGHT * 16 / 9))")
+  fi
+elif [[ "$PANELS" -eq 2 ]]; then
+  TARGET_W=$WIDTH
+  TARGET_H=$(python3 -c "print(int($WIDTH * 9 / 8))")
+  if [[ $TARGET_H -gt $HEIGHT ]]; then
+    TARGET_H=$HEIGHT
+    TARGET_W=$(python3 -c "print(int($HEIGHT * 8 / 9))")
+  fi
+else
+  TARGET_W=$WIDTH
+  TARGET_H=$(python3 -c "print(int($WIDTH * 27 / 16))")
+  if [[ $TARGET_H -gt $HEIGHT ]]; then
+    TARGET_H=$HEIGHT
+    TARGET_W=$(python3 -c "print(int($HEIGHT * 16 / 27))")
+  fi
+fi
+
+TARGET_W=$(( TARGET_W & ~1 ))
+TARGET_H=$(( TARGET_H & ~1 ))
+
+echo "Cropping to ${TARGET_W}x${TARGET_H} for ${PANELS}-panel output"
+
+HAS_AUDIO=$(probe_has_audio "$SOURCE")
+
+# Resolve effective audio mode:
+#   none → no audio regardless
+#   keep/all → only possible if source actually has audio; fall back to none if not
+if [[ "$AUDIO_MODE" == "none" || -z "$HAS_AUDIO" ]]; then
+  EFF_AUDIO=none
+else
+  EFF_AUDIO="$AUDIO_MODE"   # keep or all
+fi
+
+# ---------------------------------------------------------------------------
+# Step 1: Crop
+# ---------------------------------------------------------------------------
+CROPPED="$TMPDIR/cropped.mp4"
+ffmpeg -y -i "$SOURCE" \
+  -vf "crop=${TARGET_W}:${TARGET_H}" \
+  -c:v libx264 -crf 18 -preset fast \
+  -c:a copy \
+  "$CROPPED"
+
+DURATION=$(probe_duration "$CROPPED")
+
+# ---------------------------------------------------------------------------
+# Step 2: Build offset panels and compose output
+# ---------------------------------------------------------------------------
+if [[ "$PANELS" -eq 1 ]]; then
+  # 1-panel: just re-encode the crop (no stacking needed)
+  echo "Duration: $DURATION"
+
+  if [[ "$EFF_AUDIO" == "none" ]]; then
+    ffmpeg -y -i "$CROPPED" \
+      -c:v libx264 -crf 18 -preset fast \
+      -an \
+      "$OUTPUT"
+  else
+    # keep and all are identical for 1-panel (only one track)
+    ffmpeg -y -i "$CROPPED" \
+      -c:v libx264 -crf 18 -preset fast \
+      -c:a aac \
+      "$OUTPUT"
+  fi
+
+elif [[ "$PANELS" -eq 2 ]]; then
+  HALF=$(python3 -c "print($DURATION / 2)")
+  echo "Duration: $DURATION | Half: $HALF"
+
+  PART1="$TMPDIR/part1.mp4"
+  PART2="$TMPDIR/part2.mp4"
+  ffmpeg -y -i "$CROPPED" -t "$HALF"  -c:v libx264 -crf 18 -c:a aac "$PART1"
+  ffmpeg -y -i "$CROPPED" -ss "$HALF" -c:v libx264 -crf 18 -c:a aac "$PART2"
+
+  # A = original, B = offset +1/2
+  A="$TMPDIR/A.mp4"
+  B="$TMPDIR/B.mp4"
+
+  cp "$CROPPED" "$A"
+
+  echo "file '$PART2'" >  "$TMPDIR/concatB.txt"
+  echo "file '$PART1'" >> "$TMPDIR/concatB.txt"
+  ffmpeg -y -f concat -safe 0 -i "$TMPDIR/concatB.txt" -c copy "$B"
+
+  if [[ "$EFF_AUDIO" == "all" ]]; then
+    ffmpeg -y -i "$A" -i "$B" \
+      -filter_complex "[0:v][1:v]hstack=inputs=2[v];[0:a][1:a]amix=inputs=2:normalize=0[a]" \
+      -map "[v]" -map "[a]" \
+      -c:v libx264 -crf 18 -preset fast \
+      -c:a aac \
+      "$OUTPUT"
+  elif [[ "$EFF_AUDIO" == "keep" ]]; then
+    ffmpeg -y -i "$A" -i "$B" \
+      -filter_complex "[0:v][1:v]hstack=inputs=2[v]" \
+      -map "[v]" -map "0:a" \
+      -c:v libx264 -crf 18 -preset fast \
+      -c:a aac \
+      "$OUTPUT"
+  else
+    ffmpeg -y -i "$A" -i "$B" \
+      -filter_complex "[0:v][1:v]hstack=inputs=2[v]" \
+      -map "[v]" \
+      -c:v libx264 -crf 18 -preset fast \
+      "$OUTPUT"
+  fi
+
+else
+  THIRD=$(python3 -c "print($DURATION / 3)")
+  TWO_THIRDS=$(python3 -c "print($DURATION * 2 / 3)")
+  echo "Duration: $DURATION | 1/3: $THIRD | 2/3: $TWO_THIRDS"
+
+  PART1="$TMPDIR/part1.mp4"
+  PART2="$TMPDIR/part2.mp4"
+  ffmpeg -y -i "$CROPPED" -t "$THIRD"        -c:v libx264 -crf 18 -c:a aac "$PART1"
+  ffmpeg -y -i "$CROPPED" -ss "$THIRD"       -c:v libx264 -crf 18 -c:a aac "$PART2"
+
+  PART1b="$TMPDIR/part1b.mp4"
+  PART2b="$TMPDIR/part2b.mp4"
+  ffmpeg -y -i "$CROPPED" -t "$TWO_THIRDS"   -c:v libx264 -crf 18 -c:a aac "$PART1b"
+  ffmpeg -y -i "$CROPPED" -ss "$TWO_THIRDS"  -c:v libx264 -crf 18 -c:a aac "$PART2b"
+
+  # A = original, B = offset +1/3, C = offset +2/3
+  A="$TMPDIR/A.mp4"
+  B="$TMPDIR/B.mp4"
+  C="$TMPDIR/C.mp4"
+
+  cp "$CROPPED" "$A"
+
+  echo "file '$PART2'"  >  "$TMPDIR/concatB.txt"
+  echo "file '$PART1'"  >> "$TMPDIR/concatB.txt"
+  ffmpeg -y -f concat -safe 0 -i "$TMPDIR/concatB.txt" -c copy "$B"
+
+  echo "file '$PART2b'" >  "$TMPDIR/concatC.txt"
+  echo "file '$PART1b'" >> "$TMPDIR/concatC.txt"
+  ffmpeg -y -f concat -safe 0 -i "$TMPDIR/concatC.txt" -c copy "$C"
+
+  if [[ "$EFF_AUDIO" == "all" ]]; then
+    ffmpeg -y -i "$A" -i "$B" -i "$C" \
+      -filter_complex "[0:v][1:v][2:v]hstack=inputs=3[v];[0:a][1:a][2:a]amix=inputs=3:normalize=0[a]" \
+      -map "[v]" -map "[a]" \
+      -c:v libx264 -crf 18 -preset fast \
+      -c:a aac \
+      "$OUTPUT"
+  elif [[ "$EFF_AUDIO" == "keep" ]]; then
+    ffmpeg -y -i "$A" -i "$B" -i "$C" \
+      -filter_complex "[0:v][1:v][2:v]hstack=inputs=3[v]" \
+      -map "[v]" -map "0:a" \
+      -c:v libx264 -crf 18 -preset fast \
+      -c:a aac \
+      "$OUTPUT"
+  else
+    ffmpeg -y -i "$A" -i "$B" -i "$C" \
+      -filter_complex "[0:v][1:v][2:v]hstack=inputs=3[v]" \
+      -map "[v]" \
+      -c:v libx264 -crf 18 -preset fast \
+      "$OUTPUT"
+  fi
+fi
+
+rm -rf "$TMPDIR"
+echo "Done: $OUTPUT"

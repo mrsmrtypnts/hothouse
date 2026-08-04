@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+
+TOP=10
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --top) TOP="$2"; shift 2 ;;
+    -*) echo "Unknown option: $1" >&2; exit 1 ;;
+    *) DIR="$1"; shift ;;
+  esac
+done
+
+if [[ -z "$DIR" ]]; then
+  echo "Usage: $0 [--top N] <directory>" >&2
+  exit 1
+fi
+
+if [[ ! -d "$DIR" ]]; then
+  echo "Error: not a directory: $DIR" >&2
+  exit 1
+fi
+
+declare -A PENDING
+declare -A DONE
+
+# Count pending files per directory (keep extension list in sync with convert-to-mp4)
+while IFS= read -r -d $'\0' FILE; do
+  PARENT="$(dirname "$FILE")"
+  if [[ ! -f "${FILE%.*}.mp4" ]]; then
+    PENDING["$PARENT"]=$(( ${PENDING["$PARENT"]:-0} + 1 ))
+  fi
+done < <(find "$DIR" -type f \
+  -not -path "*/orig/*" \
+  -not -path "*/converted/*" \
+  \( -iname "*.mpg"  -o -iname "*.mpeg" -o -iname "*.avi"  -o -iname "*.mov" \
+     -o -iname "*.mkv"  -o -iname "*.wmv"  -o -iname "*.flv"  -o -iname "*.m4v" \
+     -o -iname "*.3gp"  -o -iname "*.mts"  -o -iname "*.m2ts" -o -iname "*.ts" \
+     -o -iname "*.webm" -o -iname "*.ogv"  -o -iname "*.vob" \
+     -o -iname "*.rm"   -o -iname "*.asf"  -o -iname "*.divx" -o -iname "*.qt" \) \
+  -print0)
+
+# Count done files per directory (source files moved to orig/ by convert-to-mp4)
+while IFS= read -r -d $'\0' FILE; do
+  PARENT="$(dirname "$(dirname "$FILE")")"   # parent of the orig/ dir
+  DONE["$PARENT"]=$(( ${DONE["$PARENT"]:-0} + 1 ))
+done < <(find "$DIR" -type f \
+  -path "*/orig/*" \
+  \( -iname "*.mpg"  -o -iname "*.mpeg" -o -iname "*.avi"  -o -iname "*.mov" \
+     -o -iname "*.mkv"  -o -iname "*.wmv"  -o -iname "*.flv"  -o -iname "*.m4v" \
+     -o -iname "*.3gp"  -o -iname "*.mts"  -o -iname "*.m2ts" -o -iname "*.ts" \
+     -o -iname "*.webm" -o -iname "*.ogv"  -o -iname "*.vob" \
+     -o -iname "*.rm"   -o -iname "*.asf"  -o -iname "*.divx" -o -iname "*.qt" \) \
+  -print0)
+
+if [[ ${#PENDING[@]} -eq 0 ]]; then
+  echo "No pending conversions found under $DIR"
+  exit 0
+fi
+
+printf "\n  %7s  %6s  %s\n" "Pending" "Done" "Directory"
+printf "  %7s  %6s  %s\n" "-------" "----" "---------"
+
+for dir in "${!PENDING[@]}"; do
+  printf "%d\t%d\t%s\n" "${PENDING[$dir]}" "${DONE[$dir]:-0}" "$dir"
+done | sort -t$'\t' -k1 -rn | head -n "$TOP" | \
+while IFS=$'\t' read -r pending ndone dir; do
+  printf "  %7d  %6d  %s\n" "$pending" "$ndone" "$dir"
+done

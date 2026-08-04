@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+
+set -e
+
+INPUT="$1"
+if [[ -z "$INPUT" ]]; then
+  echo "Usage: $0 <input.mp4>"
+  exit 1
+fi
+
+BASENAME="${INPUT%.*}"
+EXT="${INPUT##*.}"
+OUTPUT="${BASENAME} cropped.${EXT}"
+
+echo "Detecting crop..."
+CROP=$(ffmpeg -i "$INPUT" -vf cropdetect=limit=24:round=2:reset=0 -f null - 2>&1 | grep -o 'crop=[0-9:]*' | tail -1)
+
+if [[ -z "$CROP" ]]; then
+  echo "Could not detect crop parameters."
+  exit 1
+fi
+
+echo "Applying: $CROP"
+ffmpeg -i "$INPUT" -vf "$CROP" -c:v libx264 -crf 18 -preset fast -c:a copy "$OUTPUT"
+
+echo "Done: $OUTPUT"
+
