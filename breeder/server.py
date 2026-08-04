@@ -82,8 +82,12 @@ async def _rescan_corpus_if_configured() -> None:
 async def _auto_scan_corpus() -> None:
     # rescans on every startup (not just the first ever) so a long-lived
     # instance picks up new files added to an external/permanent collection
-    # since the last run, not just at first install
-    await _rescan_corpus_if_configured()
+    # since the last run, not just at first install.
+    # Fire-and-forget, not awaited: a large corpus can take a while to walk,
+    # and awaiting it here would block uvicorn from accepting any connections
+    # at all until the scan finishes -- the server would look completely dead
+    # rather than just having a stale/empty corpus for a bit.
+    asyncio.create_task(_rescan_corpus_if_configured())
 
 
 @app.on_event("startup")

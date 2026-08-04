@@ -78,50 +78,63 @@ def _expand_dirs(patterns: list[str]) -> list[Path]:
 
 
 def current_paths() -> list[str]:
-    """The patterns to (re)scan with -- whatever was last scanned (manually
-    or via a prior auto-scan), falling back to BREEDER_CORPUS_DIRS if nothing
-    has ever been scanned. Lets a manually-entered set of paths (via the
-    classic UI) survive periodic rescans too, not just the env-var default."""
-    return _state.get("paths") or config.CORPUS_DIRS
+    """The patterns to (re)scan with -- BREEDER_CORPUS_DIRS always wins when
+    set, so editing it and restarting actually takes effect. Falls back to
+    whatever was last scanned (e.g. manually, via the classic UI) only when
+    the env var is unset, so a one-off manual scan still survives periodic
+    rescans in that case."""
+    return config.CORPUS_DIRS or _state.get("paths") or []
+
+
+_scanning = False
+
+
+def is_scanning() -> bool:
+    return _scanning
 
 
 def scan(paths: list[str]) -> dict:
-    keywords = {"prompt": {}, "negative_prompt": {}}
-    loras = {}
-    models = {}
-    file_count = 0
-    for root in _expand_dirs(paths):
-        for f in root.rglob("*.png"):
-            try:
-                im = Image.open(f)
-                text = im.info.get("parameters")
-                if not text:
+    global _scanning
+    _scanning = True
+    try:
+        keywords = {"prompt": {}, "negative_prompt": {}}
+        loras = {}
+        models = {}
+        file_count = 0
+        for root in _expand_dirs(paths):
+            for f in root.rglob("*.png"):
+                try:
+                    im = Image.open(f)
+                    text = im.info.get("parameters")
+                    if not text:
+                        continue
+                    spec = extract.parse_parameters_text(text)
+                except Exception:
                     continue
-                spec = extract.parse_parameters_text(text)
-            except Exception:
-                continue
-            file_count += 1
-            _tally_field(spec.get("prompt", ""), keywords["prompt"], loras)
-            _tally_field(spec.get("negative_prompt", ""), keywords["negative_prompt"], None)
-            _tally_model(spec.get("model_name", ""), spec.get("model_hash", ""), models)
+                file_count += 1
+                _tally_field(spec.get("prompt", ""), keywords["prompt"], loras)
+                _tally_field(spec.get("negative_prompt", ""), keywords["negative_prompt"], None)
+                _tally_model(spec.get("model_name", ""), spec.get("model_hash", ""), models)
 
-    global _state
-    if file_count == 0 and _state.get("file_count", 0) > 0:
-        # zero matches usually means the source (e.g. an external drive) is
-        # temporarily unreachable, not that the corpus is actually empty --
-        # keep the last good corpus rather than silently wiping it out from
-        # under every add-mutator that depends on it
+        global _state
+        if file_count == 0 and _state.get("file_count", 0) > 0:
+            # zero matches usually means the source (e.g. an external drive) is
+            # temporarily unreachable, not that the corpus is actually empty --
+            # keep the last good corpus rather than silently wiping it out from
+            # under every add-mutator that depends on it
+            return summary()
+        _state = {
+            "paths": paths,
+            "scanned_at": datetime.now(timezone.utc).isoformat(),
+            "file_count": file_count,
+            "keywords": keywords,
+            "loras": loras,
+            "models": models,
+        }
+        _save()
         return summary()
-    _state = {
-        "paths": paths,
-        "scanned_at": datetime.now(timezone.utc).isoformat(),
-        "file_count": file_count,
-        "keywords": keywords,
-        "loras": loras,
-        "models": models,
-    }
-    _save()
-    return summary()
+    finally:
+        _scanning = False
 
 
 def top_keywords(field: str, exclude: set[str]) -> list[tuple[str, int, float]]:
@@ -163,6 +176,7 @@ def summary(limit: int = 25) -> dict:
         "paths": _state["paths"],
         "scanned_at": _state["scanned_at"],
         "file_count": _state["file_count"],
+        "scanning": _scanning,
         "top_prompt_keywords": top_n(_state["keywords"]["prompt"]),
         "top_negative_keywords": top_n(_state["keywords"]["negative_prompt"]),
         "top_loras": top_n(_state["loras"]),

@@ -86,6 +86,7 @@ button:disabled { opacity: 0.5; cursor: default; }
 }
 .corpus-status { font-size: 13px; color: var(--text-dim); }
 .corpus-paths { font-size: 12px; color: var(--text-faint); word-break: break-all; }
+.corpus-scanning { font-size: 12px; color: var(--accent-hover); }
 .corpus-rescan-btn { font-size: 12px; padding: 4px 10px; }
 
 .corpus-warning {

@@ -416,7 +416,17 @@ function buildCorpusPanel() {
     wrap.appendChild(el("div", { class: "corpus-paths", text: s.paths.join(", ") }));
   }
 
+  if (s && s.scanning) {
+    // a scan (startup or periodic) is running in the background -- keep
+    // checking back until it finishes rather than leaving this stale, since
+    // a large corpus can take a while and there's otherwise no sign it's
+    // doing anything at all
+    wrap.appendChild(el("div", { class: "corpus-scanning", text: "scanning..." }));
+    setTimeout(() => render(), 2000);
+  }
+
   const rescanBtn = el("button", { type: "button", class: "corpus-rescan-btn", text: "rescan now" });
+  rescanBtn.disabled = !!(s && s.scanning);
   rescanBtn.addEventListener("click", async () => {
     rescanBtn.disabled = true;
     rescanBtn.textContent = "scanning...";
