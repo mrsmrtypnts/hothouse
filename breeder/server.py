@@ -240,6 +240,13 @@ _TRANSIENT_ERROR_RE = re.compile(r"^5\d\d ")
 
 
 def _is_transient_error(exc: Exception) -> bool:
+    # client._poll's "task ... did not finish in time" -- also reported as
+    # often fixed by a resubmit, same as the 5xx case above. Checked by type
+    # rather than matching the message text, since that's the actual
+    # well-defined signal (client._poll never raises TimeoutError for any
+    # other reason) and doesn't depend on the wording staying stable.
+    if isinstance(exc, TimeoutError):
+        return True
     return bool(_TRANSIENT_ERROR_RE.match(str(exc)))
 
 
