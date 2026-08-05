@@ -843,14 +843,14 @@ function setRerollPct(pct) {
 // replaces the old single combined "Mutation strength" field.
 function getKeywordIntensity() {
   const stored = parseFloat(sessionStorage.getItem("breederV2KeywordIntensity"));
-  return isNaN(stored) ? 1 : stored;
+  return isNaN(stored) ? 2.5 : stored;
 }
 function setKeywordIntensity(v) {
   sessionStorage.setItem("breederV2KeywordIntensity", String(v));
 }
 function getLoraIntensity() {
   const stored = parseFloat(sessionStorage.getItem("breederV2LoraIntensity"));
-  return isNaN(stored) ? 1 : stored;
+  return isNaN(stored) ? 2.5 : stored;
 }
 function setLoraIntensity(v) {
   sessionStorage.setItem("breederV2LoraIntensity", String(v));
