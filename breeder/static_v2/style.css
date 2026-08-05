@@ -484,10 +484,30 @@ button:disabled { opacity: 0.5; cursor: default; }
   object-fit: contain;
   border-radius: var(--radius-sm);
 }
-.hover-caption {
-  margin-top: 8px;
-  font-size: 15px;
-  color: var(--text-dim);
-  max-width: min(480px, 90vw);
+
+/* breadcrumb hover only: image (if any) left, categorized diff-vs-parent
+   text block right -- narrower image than the plain hover-preview above
+   since it's sharing the popup with text now */
+.hover-mutation-panel {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+.hover-mutation-panel img {
+  max-width: min(280px, 60vw);
+  max-height: min(280px, 60vh);
+}
+.hover-mutations {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 13px;
+  max-width: 240px;
+}
+.mutation-category {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
   white-space: pre-wrap;
+  word-break: break-word;
 }

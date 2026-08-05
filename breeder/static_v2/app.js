@@ -246,29 +246,125 @@ function positionHoverPanel(panel, anchorEl) {
   panel.style.top = `${top}px`;
 }
 
-function showHoverPreview(node, anchorEl, caption, showImage = true) {
+// grid-thumbnail hover: error message only. The mutation-caption hover this
+// used to also show for both done and error thumbnails was removed -- rarely
+// used, and cluttered every hover in the grid. (The equivalent, much more
+// useful version lives on breadcrumb thumbnails now -- see
+// showMutationHoverPreview -- where you're actually comparing to the parent.)
+function showErrorHoverPreview(node, anchorEl) {
   hideHoverPreview();
+  if (node.status !== "error") return;
   const panel = el("div", { class: "hover-preview" });
-  if (showImage && node.status === "done" && node.image_file) {
+  panel.appendChild(el("div", { class: "hover-error", text: node.error || "(no error message)" }));
+  document.body.appendChild(panel);
+  hoverEl = panel;
+  positionHoverPanel(panel, anchorEl);
+}
+
+// Splits one prompt/negative-prompt field's diff-vs-parent into changed-only
+// lines (no "unchanged" -- this view is deliberately concise), bucketed by
+// kind since keywords and loras are two separate categories in the hover
+// panel even though they share one text field. `prefix` distinguishes
+// negative-prompt lines (there's no separate "negative keywords" category,
+// just a "neg: " tag on the line, keeping the category list exactly the
+// eight the panel groups by).
+function _promptDiffLines(spec, parentSpec, field, prefix) {
+  const parentSegs = splitSegments(parentSpec[field] || "").map(parseSegment);
+  const { segs: currentNames } = splitSegmentsPreservingSeparators(spec[field] || "");
+  const currentSegs = currentNames.map(parseSegment);
+  const ops = diffSegmentOps(parentSegs.map((s) => s.name), currentSegs.map((s) => s.name));
+
+  const keywordLines = [], loraLines = [];
+  for (const op of ops) {
+    let seg, cls, sign;
+    if (op.type === "remove") {
+      seg = parentSegs[op.pIdx]; cls = "diff-removed"; sign = "−";
+    } else if (op.type === "add") {
+      seg = currentSegs[op.cIdx]; cls = "diff-added"; sign = "+";
+    } else {
+      const p = parentSegs[op.pIdx], c = currentSegs[op.cIdx];
+      if (p.weight === c.weight) continue;
+      seg = c; cls = p.weight < c.weight ? "diff-increased" : "diff-decreased"; sign = "";
+    }
+    const line = { text: `${prefix}${sign}${buildSegmentText(seg)}`, cls };
+    (seg.kind === "lora" ? loraLines : keywordLines).push(line);
+  }
+  return { keywordLines, loraLines };
+}
+
+function _scalarDiffLine(label, parentVal, currentVal, mode, formatValue) {
+  const cls = fieldDiffClass(parentVal, currentVal, mode);
+  if (!cls) return null;
+  return { text: `${label}: ${formatValue ? formatValue(currentVal) : currentVal}`, cls };
+}
+
+// Concise, categorized, color-coded diff of `spec` vs `parentSpec` -- same
+// underlying diff logic and colors as the spec form's field highlighting
+// (buildPromptDiffSpans / fieldDiffClass), just compact: only fields that
+// actually changed, grouped into categories in the same order they appear
+// in the form (Prompt/Negative prompt -> keywords/loras, then Model,
+// Sampler, Size, Seed, Steps, CFG scale). Returns an array of non-empty
+// category line-arrays, or [] if nothing changed (e.g. no parentSpec).
+function buildMutationDiffCategories(spec, parentSpec) {
+  if (!parentSpec) return [];
+  const pos = _promptDiffLines(spec, parentSpec, "prompt", "");
+  const neg = _promptDiffLines(spec, parentSpec, "negative_prompt", "neg: ");
+  const modelLine = _scalarDiffLine(
+    "Model",
+    `${parentSpec.model_name || ""}|${parentSpec.model_hash || ""}`,
+    `${spec.model_name || ""}|${spec.model_hash || ""}`,
+    "categorical",
+    () => (spec.model_hash ? `${spec.model_name} [${spec.model_hash}]` : spec.model_name)
+  );
+  const samplerLine = _scalarDiffLine("Sampler", parentSpec.sampler_name, spec.sampler_name, "categorical");
+  const sizeLine = _scalarDiffLine(
+    "Size", `${parentSpec.width}x${parentSpec.height}`, `${spec.width}x${spec.height}`,
+    "categorical", () => `${spec.width} x ${spec.height}`
+  );
+  const seedLine = _scalarDiffLine("Seed", parentSpec.seed, spec.seed, "categorical");
+  const stepsLine = _scalarDiffLine("Steps", parentSpec.steps, spec.steps, "numeric");
+  const cfgLine = _scalarDiffLine("CFG", parentSpec.cfg_scale, spec.cfg_scale, "numeric");
+
+  return [
+    [...pos.keywordLines, ...neg.keywordLines],
+    [...pos.loraLines, ...neg.loraLines],
+    [modelLine].filter(Boolean),
+    [samplerLine].filter(Boolean),
+    [sizeLine].filter(Boolean),
+    [seedLine].filter(Boolean),
+    [stepsLine].filter(Boolean),
+    [cfgLine].filter(Boolean),
+  ].filter((cat) => cat.length > 0);
+}
+
+// Breadcrumb-thumbnail hover: image (if any) on the left, the concise
+// category-grouped diff-vs-parent on the right -- deliberately a different
+// layout from showErrorHoverPreview's, see the block comment there.
+function showMutationHoverPreview(node, parentSpec, anchorEl) {
+  hideHoverPreview();
+  const panel = el("div", { class: "hover-preview hover-mutation-panel" });
+  if (node.status === "done" && node.image_file) {
     const img = el("img", { src: `/images/${node.image_file}`, alt: node.spec.prompt || node.id });
     img.addEventListener("load", () => {
       if (hoverEl === panel) positionHoverPanel(panel, anchorEl);
     });
     panel.appendChild(img);
   } else if (node.status === "error") {
-    panel.appendChild(el("div", {
-      class: "hover-error",
-      text: node.error || "(no error message)",
-    }));
+    panel.appendChild(el("div", { class: "hover-error", text: node.error || "(no error message)" }));
   }
-  const text = caption ?? node.label;
-  if (text) {
-    panel.appendChild(el("div", { class: "hover-caption", text }));
+  const categories = buildMutationDiffCategories(node.spec, parentSpec);
+  if (categories.length) {
+    const textBlock = el("div", { class: "hover-mutations" });
+    for (const cat of categories) {
+      const catEl = el("div", { class: "mutation-category" });
+      for (const line of cat) catEl.appendChild(el("div", { class: line.cls, text: line.text }));
+      textBlock.appendChild(catEl);
+    }
+    panel.appendChild(textBlock);
   }
   if (!panel.hasChildNodes()) return;
   document.body.appendChild(panel);
   hoverEl = panel;
-
   positionHoverPanel(panel, anchorEl);
 }
 
@@ -316,10 +412,6 @@ function thumbCard(node, selected) {
 
   if (node.status === "done") {
     const img = el("img", { src: `/images/${node.image_file}`, alt: node.spec.prompt || node.id });
-    // no enlarged preview on hover here (that's what the focused-node view is
-    // for) -- just the mutation caption, if this node has one
-    img.addEventListener("mouseenter", () => showHoverPreview(node, img, undefined, false));
-    img.addEventListener("mouseleave", hideHoverPreview);
     card.appendChild(img);
   } else if (node.status === "error") {
     card.appendChild(el("div", { class: "thumb-status thumb-error", text: "failed" }));
@@ -332,7 +424,7 @@ function thumbCard(node, selected) {
       render();
     });
     card.appendChild(retryBtn);
-    card.addEventListener("mouseenter", () => showHoverPreview(node, card));
+    card.addEventListener("mouseenter", () => showErrorHoverPreview(node, card));
     card.addEventListener("mouseleave", hideHoverPreview);
   } else {
     card.appendChild(el("div", { class: "thumb-status" }, [el("div", { class: "spinner" })]));
@@ -528,7 +620,7 @@ function sliceWithEllipsis(ancestors, head, tail) {
   return [...ancestors.slice(0, head), null, ...ancestors.slice(ancestors.length - tail)];
 }
 
-function renderCrumbItems(itemsWrap, items, nodeId) {
+function renderCrumbItems(itemsWrap, items, nodeId, byId) {
   itemsWrap.textContent = "";
   for (const a of items) {
     if (a === null) {
@@ -549,7 +641,11 @@ function renderCrumbItems(itemsWrap, items, nodeId) {
     } else {
       crumbEl = el("span", { class: "crumb-pending", text: a.status === "error" ? "✗" : "…" });
     }
-    crumbEl.addEventListener("mouseenter", () => showHoverPreview(a, crumbEl, caption));
+    // the true parent, not just the previous item in `items` -- an elided
+    // trail (see sliceWithEllipsis) can have gaps, so array-adjacency isn't
+    // the same as the actual parent_id relationship
+    const parent = a.parent_id ? byId.get(a.parent_id) : null;
+    crumbEl.addEventListener("mouseenter", () => showMutationHoverPreview(a, parent && parent.spec, crumbEl));
     crumbEl.addEventListener("mouseleave", hideHoverPreview);
     const link = el("a", { href: `?n=${a.id}`, class: "crumb-link" });
     link.appendChild(crumbEl);
@@ -564,7 +660,7 @@ function renderCrumbItems(itemsWrap, items, nodeId) {
 // window should show as much of the trail as actually fits. Measures against
 // `bar` (which also contains the "+ New"/"Import..." actions) but only ever
 // rebuilds `itemsWrap`'s contents, so those actions are never destroyed.
-function fitCrumbBar(bar, itemsWrap, ancestors, nodeId) {
+function fitCrumbBar(bar, itemsWrap, ancestors, nodeId, byId) {
   const container = bar.parentElement;
   if (!container) return;
   const maxWidth = container.clientWidth;
@@ -574,11 +670,11 @@ function fitCrumbBar(bar, itemsWrap, ancestors, nodeId) {
     const prevHead = head, prevTail = tail;
     head++;
     if (head + tail < ancestors.length) tail++;
-    renderCrumbItems(itemsWrap, sliceWithEllipsis(ancestors, head, tail), nodeId);
+    renderCrumbItems(itemsWrap, sliceWithEllipsis(ancestors, head, tail), nodeId, byId);
     if (bar.scrollWidth > maxWidth) {
       head = prevHead;
       tail = prevTail;
-      renderCrumbItems(itemsWrap, sliceWithEllipsis(ancestors, head, tail), nodeId);
+      renderCrumbItems(itemsWrap, sliceWithEllipsis(ancestors, head, tail), nodeId, byId);
       break;
     }
   }
@@ -588,19 +684,20 @@ function breadcrumbs(ancestors, nodeId) {
   const bar = el("div", { class: "crumbs" });
   const itemsWrap = el("div", { class: "crumb-items" });
   bar.appendChild(itemsWrap);
+  const byId = new Map(ancestors.map((a) => [a.id, a]));
   if (expandedCrumbsFor === nodeId) {
     bar.classList.add("expanded");
-    renderCrumbItems(itemsWrap, ancestors, nodeId);
+    renderCrumbItems(itemsWrap, ancestors, nodeId, byId);
     return bar;
   }
   if (ancestors.length <= CRUMB_MIN_HEAD + CRUMB_MIN_TAIL + 1) {
-    renderCrumbItems(itemsWrap, ancestors, nodeId);
+    renderCrumbItems(itemsWrap, ancestors, nodeId, byId);
     return bar;
   }
   // starts minimally abbreviated; grown to fit once actually laid out (can't
   // measure width before the bar is attached to the document)
-  renderCrumbItems(itemsWrap, sliceWithEllipsis(ancestors, CRUMB_MIN_HEAD, CRUMB_MIN_TAIL), nodeId);
-  requestAnimationFrame(() => fitCrumbBar(bar, itemsWrap, ancestors, nodeId));
+  renderCrumbItems(itemsWrap, sliceWithEllipsis(ancestors, CRUMB_MIN_HEAD, CRUMB_MIN_TAIL), nodeId, byId);
+  requestAnimationFrame(() => fitCrumbBar(bar, itemsWrap, ancestors, nodeId, byId));
   return bar;
 }
 
