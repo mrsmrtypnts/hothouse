@@ -3,6 +3,7 @@ import base64
 import io
 import json
 import os
+import re
 import secrets
 import threading
 import uuid
@@ -223,6 +224,25 @@ def _record_reliability(spec: dict, success: bool, error: Optional[str] = None) 
     reliability.record("model", _model_names_in(spec), success=success, error=error)
 
 
+# "retry up to 3 times" -> 3 retries beyond the first attempt (4 tries total)
+MAX_TRANSIENT_RETRIES = 3
+TRANSIENT_RETRY_BACKOFF_SECONDS = 3
+
+# client._raise_for_status formats API errors as "<status> <API_BASE>: <detail>"
+# -- a leading 5xx means Diffus's own backend choked (e.g. "Task ... is
+# completed but query results failed"), which experience shows is usually a
+# transient hiccup fixed by just resubmitting, same as manually pressing
+# Retry. A 4xx (bad model/lora/prompt) or an explicit failed_reason from the
+# backend (see client.check_progress) means the request itself was rejected
+# or the generation genuinely failed -- retrying with the same spec would
+# just fail the same way again, so those are never auto-retried.
+_TRANSIENT_ERROR_RE = re.compile(r"^5\d\d ")
+
+
+def _is_transient_error(exc: Exception) -> bool:
+    return bool(_TRANSIENT_ERROR_RE.match(str(exc)))
+
+
 async def _render_node(
     node_id: str,
     spec: dict,
@@ -231,28 +251,36 @@ async def _render_node(
     render_mode: str = "txt2img",
     init_image_bytes: Optional[bytes] = None,
 ) -> None:
-    try:
-        async with _render_semaphore:
-            if render_mode == "img2img" and init_image_bytes is not None:
-                resized_init = _crop_and_resize(
-                    init_image_bytes, spec.get("width", 512), spec.get("height", 512)
-                )
-                init_b64 = base64.b64encode(resized_init).decode()
-                task_id = await client.submit_img2img(spec, init_b64)
-            else:
-                task_id = await client.submit(spec)
-            await store.set_task_id(node_id, task_id)
-            images = await client.poll_and_fetch(task_id)
-            image_bytes, api_filename = images[0]
-            if parent_id and label:
-                image_bytes = _tag_lineage(image_bytes, parent_id, label)
-            filename = api_filename or _image_filename(node_id, spec)
-            (config.IMAGE_DIR / filename).write_bytes(image_bytes)
-        await store.mark_done(node_id, filename)
-        _record_reliability(spec, success=True)
-    except Exception as exc:
-        await store.mark_error(node_id, str(exc))
-        _record_reliability(spec, success=False, error=str(exc))
+    last_exc: Optional[Exception] = None
+    for attempt in range(1, MAX_TRANSIENT_RETRIES + 2):
+        try:
+            async with _render_semaphore:
+                if render_mode == "img2img" and init_image_bytes is not None:
+                    resized_init = _crop_and_resize(
+                        init_image_bytes, spec.get("width", 512), spec.get("height", 512)
+                    )
+                    init_b64 = base64.b64encode(resized_init).decode()
+                    task_id = await client.submit_img2img(spec, init_b64)
+                else:
+                    task_id = await client.submit(spec)
+                await store.set_task_id(node_id, task_id)
+                images = await client.poll_and_fetch(task_id)
+                image_bytes, api_filename = images[0]
+                if parent_id and label:
+                    image_bytes = _tag_lineage(image_bytes, parent_id, label)
+                filename = api_filename or _image_filename(node_id, spec)
+                (config.IMAGE_DIR / filename).write_bytes(image_bytes)
+            await store.mark_done(node_id, filename)
+            _record_reliability(spec, success=True)
+            return
+        except Exception as exc:
+            last_exc = exc
+            if attempt <= MAX_TRANSIENT_RETRIES and _is_transient_error(exc):
+                await asyncio.sleep(TRANSIENT_RETRY_BACKOFF_SECONDS)
+                continue
+            break
+    await store.mark_error(node_id, str(last_exc))
+    _record_reliability(spec, success=False, error=str(last_exc))
 
 
 @app.post("/api/root")
