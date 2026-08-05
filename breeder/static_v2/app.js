@@ -11,8 +11,9 @@ const api = {
   del: (path) => fetch(path, { method: "DELETE" }).then((r) => r.json()),
 };
 
-// duplicated from mutate.py's SAMPLERS -- breeder has no /api/samplers endpoint,
-// this is just a suggestion list (the sampler field accepts free text)
+// duplicated from mutate.py's SAMPLERS -- breeder has no /api/samplers
+// endpoint, so this is the known-good list buildSamplerField offers as
+// <select> options (plus a "custom..." escape hatch for anything else)
 const SAMPLERS = ["DPM++ 2M SDE", "Euler a", "Euler", "DPM++ 2M", "DPM++ 2M Karras", "DPM++ SDE Karras", "UniPC"];
 const SIZE_OPTIONS = [
   { width: 800, height: 1200 },
@@ -625,7 +626,7 @@ function fieldRow(labelText, inputEl) {
   return row;
 }
 
-function numField(form, label, key, opts = {}) {
+function numField(form, label, key, opts = {}, parentSpec) {
   const input = el("input", { type: "number", ...opts });
   input.value = formSpec[key] ?? "";
   input.addEventListener("input", () => {
@@ -633,10 +634,11 @@ function numField(form, label, key, opts = {}) {
     formSpec[key] = isNaN(v) ? formSpec[key] : v;
   });
   form.appendChild(fieldRow(label, input));
+  wireFieldDiff([input], parentSpec && parentSpec[key], formSpec[key], "numeric");
   return input;
 }
 
-function buildSeedField(form) {
+function buildSeedField(form, parentSpec) {
   const input = el("input", { type: "number", step: "1" });
   input.value = formSpec.seed ?? "";
   input.addEventListener("input", () => {
@@ -655,9 +657,12 @@ function buildSeedField(form) {
   row.appendChild(input);
   row.appendChild(resetBtn);
   form.appendChild(fieldRow("Seed", row));
+  // seed has no "increase/decrease" that means anything -- just flag that
+  // it was rerolled from the parent's
+  wireFieldDiff([input], parentSpec && parentSpec.seed, formSpec.seed, "categorical");
 }
 
-function buildSizeField(form) {
+function buildSizeField(form, parentSpec) {
   const currentKey = `${formSpec.width}x${formSpec.height}`;
   const select = el("select");
   let seen = false;
@@ -677,9 +682,11 @@ function buildSizeField(form) {
     formSpec.height = h;
   });
   form.appendChild(fieldRow("Size", select));
+  const parentKey = parentSpec ? `${parentSpec.width}x${parentSpec.height}` : null;
+  wireFieldDiff([select], parentKey, currentKey, "categorical");
 }
 
-function buildModelField(form, models) {
+function buildModelField(form, models, parentSpec) {
   const currentName = formSpec.model_name || "";
   const currentHash = formSpec.model_hash || "";
   const currentKey = `${currentName}|${currentHash}`;
@@ -726,6 +733,57 @@ function buildModelField(form, models) {
   wrap.appendChild(select);
   wrap.appendChild(customInput);
   form.appendChild(wrap);
+
+  const parentKey = parentSpec ? `${parentSpec.model_name || ""}|${parentSpec.model_hash || ""}` : null;
+  wireFieldDiff([select, customInput], parentKey, currentKey, "categorical");
+}
+
+// Mirrors buildModelField's select+"custom..." pattern exactly, rather than
+// the old free-text-with-datalist input -- the two fields looked like
+// different kinds of control for no good reason, and a real <select> means
+// the browser's native dropdown always shows the full suggestion list
+// (datalist suggestions are filtered against whatever's already typed,
+// which was hiding options -- see the sampler-datalist fix this replaces).
+// Sampler names aren't a hard-constrained enum from the API's point of view,
+// so "custom..." still exists as the escape hatch for anything not listed.
+function buildSamplerField(form, parentSpec) {
+  const currentName = formSpec.sampler_name || "";
+
+  const select = el("select");
+  const seen = new Set();
+  for (const s of SAMPLERS) {
+    seen.add(s);
+    select.appendChild(el("option", { value: s, text: s }));
+  }
+  if (currentName && !seen.has(currentName)) {
+    select.appendChild(el("option", { value: currentName, text: currentName }));
+  }
+  select.appendChild(el("option", { value: "__custom__", text: "custom..." }));
+  select.value = currentName || "__custom__";
+
+  const customInput = el("input", { type: "text", placeholder: "sampler name" });
+  customInput.value = currentName;
+  customInput.style.display = select.value === "__custom__" ? "" : "none";
+
+  select.addEventListener("change", () => {
+    if (select.value === "__custom__") {
+      customInput.style.display = "";
+      customInput.focus();
+      formSpec.sampler_name = customInput.value;
+    } else {
+      customInput.style.display = "none";
+      formSpec.sampler_name = select.value;
+    }
+  });
+  customInput.addEventListener("input", () => { formSpec.sampler_name = customInput.value; });
+
+  const wrap = el("div", { class: "field-row" });
+  wrap.appendChild(el("span", { class: "field-label", text: "Sampler" }));
+  wrap.appendChild(select);
+  wrap.appendChild(customInput);
+  form.appendChild(wrap);
+
+  wireFieldDiff([select, customInput], parentSpec && parentSpec.sampler_name, currentName, "categorical");
 }
 
 function buildForm(spec, knownModels, parentSpec) {
@@ -759,37 +817,16 @@ function buildForm(spec, knownModels, parentSpec) {
     () => negPromptDiffDismissed, () => { negPromptDiffDismissed = true; }
   )));
 
-  buildModelField(form, knownModels);
-
-  const samplerInput = el("input", { type: "text", list: "sampler-options" });
-  samplerInput.value = formSpec.sampler_name || "";
-  // datalist suggestions are filtered by the browser against whatever's
-  // already typed -- with the field pre-filled (e.g. "Euler") that hides
-  // every other option, including the default. Clearing on focus (and
-  // showing the old value as a placeholder) surfaces the full list; blur
-  // restores it if nothing was picked/typed.
-  samplerInput.addEventListener("focus", () => {
-    samplerInput.dataset.prevValue = samplerInput.value;
-    samplerInput.placeholder = samplerInput.value;
-    samplerInput.value = "";
-  });
-  samplerInput.addEventListener("blur", () => {
-    if (!samplerInput.value) samplerInput.value = samplerInput.dataset.prevValue || "";
-  });
-  samplerInput.addEventListener("input", () => { formSpec.sampler_name = samplerInput.value; });
-  const datalist = el("datalist", { id: "sampler-options" });
-  for (const s of SAMPLERS) datalist.appendChild(el("option", { value: s }));
-  form.appendChild(datalist);
-  form.appendChild(fieldRow("Sampler", samplerInput));
-
-  buildSizeField(form);
-  buildSeedField(form);
+  buildModelField(form, knownModels, parentSpec);
+  buildSamplerField(form, parentSpec);
+  buildSizeField(form, parentSpec);
+  buildSeedField(form, parentSpec);
 
   const numRow = el("div", { class: "field-grid" });
   form.appendChild(numRow);
-  numField(numRow, "Steps", "steps", { min: "1", max: "150" });
-  numField(numRow, "CFG scale", "cfg_scale", { min: "1", max: "30", step: "0.5" });
-  numField(numRow, "Clip skip", "clip_skip", { min: "1", max: "12" });
+  numField(numRow, "Steps", "steps", { min: "1", max: "150" }, parentSpec);
+  numField(numRow, "CFG scale", "cfg_scale", { min: "1", max: "30", step: "0.5" }, parentSpec);
+  numField(numRow, "Clip skip", "clip_skip", { min: "1", max: "12" }, parentSpec);
 
   return form;
 }
@@ -1338,6 +1375,39 @@ function wrapFieldWithDiff(inputEl, parentText, currentText, isDismissed, dismis
     inputEl.addEventListener("input", dismissOverlay, { once: true });
   }
   return wrap;
+}
+
+// Single-value analog of wrapFieldWithDiff's overlay technique -- there's no
+// way to paint colored spans inside native select/number-input chrome, so
+// this colors the control itself instead. "numeric" diffs by direction
+// (green increase / red decrease, same colors as a keyword's weight nudge);
+// "categorical" just flags any change (blue), since there's no meaningful
+// "more/less" for e.g. a model name or a rerolled seed.
+function fieldDiffClass(parentVal, currentVal, mode) {
+  if (parentVal == null || currentVal == null) return null;
+  if (mode === "numeric") {
+    const p = parseFloat(parentVal), c = parseFloat(currentVal);
+    if (isNaN(p) || isNaN(c) || p === c) return null;
+    return c > p ? "field-diff-increase" : "field-diff-decrease";
+  }
+  return String(parentVal) === String(currentVal) ? null : "field-diff-changed";
+}
+
+// Applies the diff class to `elements` (usually just the one control, but
+// e.g. Model/Sampler have a select plus a custom-text fallback that both
+// need it) and removes it the moment the user actually interacts with any
+// of them -- once you're editing a field, the "this changed from the
+// parent" signal has done its job, same lifecycle as the prompt overlay.
+function wireFieldDiff(elements, parentVal, currentVal, mode) {
+  const cls = fieldDiffClass(parentVal, currentVal, mode);
+  if (!cls) return;
+  for (const el of elements) el.classList.add(cls);
+  const dismiss = () => { for (const el of elements) el.classList.remove(cls); };
+  for (const el of elements) {
+    el.addEventListener("focus", dismiss, { once: true });
+    el.addEventListener("input", dismiss, { once: true });
+    el.addEventListener("change", dismiss, { once: true });
+  }
 }
 
 function wireFieldPromptShortcuts(panel) {

@@ -400,6 +400,17 @@ button:disabled { opacity: 0.5; cursor: default; }
 .diff-added, .diff-increased { color: #7ed992; }
 .diff-decreased { color: #d97a7a; }
 .diff-removed { color: #d97a7a; opacity: 0.6; text-decoration: line-through; }
+
+/* single-value fields (Steps/CFG/Clip skip, Model/Sampler/Seed/Size) can't
+   host the prompt's span-based overlay -- same color language, applied
+   directly to the control instead. Green/red mirror the prompt's
+   increased/decreased colors; blue is for a change with no inherent
+   direction (swapped model, rerolled seed, ...), deliberately distinct from
+   --accent so it doesn't read as "focused/interactive". Dismissed (see
+   wireFieldDiffDismiss) the moment the field is actually touched. */
+.field-diff-increase { border-color: #7ed992 !important; color: #7ed992; }
+.field-diff-decrease { border-color: #d97a7a !important; color: #d97a7a; }
+.field-diff-changed { border-color: #6bb3f0 !important; color: #6bb3f0; }
 .field-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
