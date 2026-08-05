@@ -46,7 +46,16 @@ def _load() -> None:
         # resumed by server.py's startup recovery pass -- see
         # recover_orphaned_renders / _resume_interrupted_node. Left alone
         # here; nothing to do at load time.
-        if _backfill_batch_ids():
+        changed = _backfill_batch_ids()
+        # nodes written before "viewed" existed (server-side, replacing the
+        # old per-browser-origin localStorage tracking) -- treat them as
+        # already seen rather than unread, so this migration doesn't dump a
+        # wall of new unread dots on an existing library
+        for n in _nodes.values():
+            if "viewed" not in n:
+                n["viewed"] = True
+                changed = True
+        if changed:
             _save()
 
 
@@ -75,6 +84,7 @@ async def create_node(
         "status": "pending",
         "image_file": None,
         "error": None,
+        "viewed": False,
         "created_at": _now(),
     }
     async with _lock:
@@ -121,6 +131,17 @@ async def mark_pending(node_id: str) -> None:
         _nodes[node_id]["image_file"] = None
         _nodes[node_id]["error"] = None
         _nodes[node_id]["task_id"] = None
+        # retrying replaces what this node will render as -- having looked at
+        # the old (failed) result shouldn't count as having seen the new one
+        _nodes[node_id]["viewed"] = False
+        _save()
+
+
+async def mark_viewed(node_id: str) -> None:
+    async with _lock:
+        if node_id not in _nodes or _nodes[node_id].get("viewed"):
+            return
+        _nodes[node_id]["viewed"] = True
         _save()
 
 

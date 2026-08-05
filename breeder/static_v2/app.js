@@ -272,29 +272,16 @@ function showHoverPreview(node, anchorEl, caption, showImage = true) {
   positionHoverPanel(panel, anchorEl);
 }
 
-// which node ids have ever been focused -- persisted in localStorage (not
-// sessionStorage) since "have I looked at this before" should survive across
-// tabs/sessions, like read/unread in an email client
-function getViewedNodeIds() {
-  try {
-    return new Set(JSON.parse(localStorage.getItem("breederV2ViewedNodes") || "[]"));
-  } catch {
-    return new Set();
-  }
-}
+// "have I looked at this before" lives server-side on the node itself
+// (node.viewed, see store.py) rather than in localStorage -- localStorage is
+// scoped per browser origin, which includes the port, and breeder's port can
+// drift across restarts (see run.sh's port-picker), silently resetting every
+// thumbnail back to unread each time. Retrying a node resets viewed back to
+// false server-side too (store.mark_pending) -- looking at the old (failed)
+// result shouldn't count as having seen the new one, so there's no separate
+// "mark unviewed" call needed here.
 function markNodeViewed(id) {
-  const viewed = getViewedNodeIds();
-  if (viewed.has(id)) return;
-  viewed.add(id);
-  localStorage.setItem("breederV2ViewedNodes", JSON.stringify([...viewed]));
-}
-// retrying replaces what this id will render as -- the fact you looked at
-// the old (failed) result shouldn't count as having seen the new one
-function markNodeUnviewed(id) {
-  const viewed = getViewedNodeIds();
-  if (!viewed.has(id)) return;
-  viewed.delete(id);
-  localStorage.setItem("breederV2ViewedNodes", JSON.stringify([...viewed]));
+  api.post(`/api/nodes/${id}/viewed`, {});
 }
 
 // Wires an element as a real navigable link to node `id` -- gives right-click
@@ -309,10 +296,10 @@ function wireNavClick(el, id) {
   });
 }
 
-function thumbCard(node, selected, viewedIds) {
+function thumbCard(node, selected) {
   const card = el("a", { class: `thumb-card${selected ? " selected" : ""}`, href: `?n=${node.id}` });
 
-  if (!viewedIds.has(node.id)) {
+  if (!node.viewed) {
     card.appendChild(el("div", { class: "unread-dot" }));
   }
 
@@ -342,7 +329,6 @@ function thumbCard(node, selected, viewedIds) {
       e.stopPropagation();
       retryBtn.disabled = true;
       await api.post(`/api/nodes/${node.id}/retry`, {});
-      markNodeUnviewed(node.id);
       render();
     });
     card.appendChild(retryBtn);
@@ -463,7 +449,6 @@ function buildBrowserPanel(allNodes, focusId) {
   panel.appendChild(corpusPanel);
 
   const descendantCounts = computeDescendantCounts(allNodes);
-  const viewedIds = getViewedNodeIds();
   const grid = el("div", { class: "thumb-grid" });
 
   function renderGrid() {
@@ -473,7 +458,7 @@ function buildBrowserPanel(allNodes, focusId) {
     for (const node of allNodes) {
       if (minDescendants > 0 && (descendantCounts.get(node.id) || 0) < minDescendants) continue;
       if (!nodeMatchesKeyword(node, keyword)) continue;
-      grid.appendChild(thumbCard(node, node.id === focusId, viewedIds));
+      grid.appendChild(thumbCard(node, node.id === focusId));
     }
   }
 
@@ -1483,7 +1468,6 @@ async function buildDetailPanel(focusId, knownModels) {
       retryBtn.disabled = true;
       retryBtn.textContent = "Retrying...";
       await api.post(`/api/nodes/${node.id}/retry`, {});
-      markNodeUnviewed(node.id);
       render();
     });
     errBox.appendChild(retryBtn);

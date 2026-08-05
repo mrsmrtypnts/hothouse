@@ -406,6 +406,14 @@ async def get_node(node_id: str):
     return node
 
 
+@app.post("/api/nodes/{node_id}/viewed")
+async def mark_node_viewed(node_id: str):
+    if store.get(node_id) is None:
+        raise HTTPException(404, "node not found")
+    await store.mark_viewed(node_id)
+    return store.get(node_id)
+
+
 def _img2img_init_bytes(node: dict) -> Optional[bytes]:
     if node.get("render_mode") != "img2img" or not node["parent_id"]:
         return None
