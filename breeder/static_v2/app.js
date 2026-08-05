@@ -182,14 +182,27 @@ let corpusSummary = null;
 let promptDiffDismissed = false;
 let negPromptDiffDismissed = false;
 
-// in-progress edits (and diff-dismissed state) for any focus *other than the
-// current one*, keyed by focus id ("new" is a valid key too) -- so switching
-// to a different thumbnail and back doesn't forget what you were typing.
+// in-progress edits (diff-dismissed state, breed mode, denoising strength)
+// for any focus *other than the current one*, keyed by focus id ("new" is a
+// valid key too) -- so switching to a different thumbnail and back doesn't
+// forget what you were typing, or which mode you had it in. Mode/denoise
+// used to be one sessionStorage value shared across the whole tab, which
+// meant breeding img2img from node A and then visiting node B would leave
+// B (and everywhere else) stuck in img2img too -- these are properties of
+// "what was I about to do to this specific node", not a tab-wide setting.
 // Cleared on a full page reload by design; this is meant to survive
 // navigating around within the same tab, not persist indefinitely.
 const savedFormSpecs = new Map();
 const savedPromptDismissed = new Map();
 const savedNegPromptDismissed = new Map();
+const savedMode = new Map();
+const savedDenoise = new Map();
+
+// current focus's breed mode / denoising strength -- mirrors formSpec's
+// lifecycle (see switchFormFocus), read/written directly by
+// buildBreedControls/buildDenoiseField instead of a per-tab getter/setter
+let currentMode = "txt2img";
+let currentDenoise = 0.75;
 
 // Call whenever the effective focus is about to change to `newFocusId`.
 // Stashes the outgoing focus's in-progress state (if any) and restores
@@ -202,25 +215,16 @@ function switchFormFocus(newFocusId) {
       savedFormSpecs.set(formFocusId, formSpec);
       savedPromptDismissed.set(formFocusId, promptDiffDismissed);
       savedNegPromptDismissed.set(formFocusId, negPromptDiffDismissed);
+      savedMode.set(formFocusId, currentMode);
+      savedDenoise.set(formFocusId, currentDenoise);
     }
     formFocusId = newFocusId;
     promptDiffDismissed = savedPromptDismissed.get(newFocusId) || false;
     negPromptDiffDismissed = savedNegPromptDismissed.get(newFocusId) || false;
+    currentMode = savedMode.get(newFocusId) || "txt2img";
+    currentDenoise = savedDenoise.has(newFocusId) ? savedDenoise.get(newFocusId) : 0.75;
   }
   return changed;
-}
-
-function getMode() {
-  return sessionStorage.getItem("breederV2Mode") || "txt2img";
-}
-function setMode(mode) {
-  sessionStorage.setItem("breederV2Mode", mode);
-}
-function getDenoise() {
-  return parseFloat(sessionStorage.getItem("denoisingStrength") || "0.75");
-}
-function setDenoise(v) {
-  sessionStorage.setItem("denoisingStrength", String(v));
 }
 
 let hoverEl = null;
@@ -990,14 +994,14 @@ function buildDenoiseField() {
   const wrap = el("div", { class: "field-row" });
   wrap.appendChild(el("span", { class: "field-label", text: "Denoising strength" }));
   const row = el("div", { class: "reroll-row" });
-  const initial = getDenoise();
+  const initial = currentDenoise;
   const slider = el("input", { type: "range", min: "0", max: "1", step: "0.05" });
   slider.value = String(initial);
   const readout = el("span", { class: "reroll-readout", text: initial.toFixed(2) });
   slider.addEventListener("input", () => {
     const v = parseFloat(slider.value);
     readout.textContent = v.toFixed(2);
-    setDenoise(v);
+    currentDenoise = v;
   });
   row.appendChild(slider);
   row.appendChild(readout);
@@ -1023,7 +1027,7 @@ function buildBreedControls(node) {
   if (loraWarning) sliderStack.appendChild(loraWarning);
   sliderStack.appendChild(otherIntensity.wrap);
 
-  let mode = getMode();
+  let mode = currentMode;
   const modeToggle = el("div", { class: "mode-toggle" });
   const txt2imgBtn = el("button", { type: "button", text: "txt2img" });
   const img2imgBtn = el("button", { type: "button", text: "img2img" });
@@ -1034,8 +1038,8 @@ function buildBreedControls(node) {
     img2imgBtn.classList.toggle("active", mode === "img2img");
     denoise.wrap.style.display = mode === "img2img" ? "" : "none";
   }
-  txt2imgBtn.addEventListener("click", () => { mode = "txt2img"; setMode(mode); updateModeUI(); });
-  img2imgBtn.addEventListener("click", () => { mode = "img2img"; setMode(mode); updateModeUI(); });
+  txt2imgBtn.addEventListener("click", () => { mode = "txt2img"; currentMode = mode; updateModeUI(); });
+  img2imgBtn.addEventListener("click", () => { mode = "img2img"; currentMode = mode; updateModeUI(); });
   updateModeUI();
   modeToggle.appendChild(txt2imgBtn);
   modeToggle.appendChild(img2imgBtn);
@@ -1179,7 +1183,10 @@ function wireImageOnlyDrop(target) {
   wireImageDrop(target, async (file) => {
     try {
       const node = await uploadRootImage(file, formSpec);
-      setMode("img2img");
+      // pre-seed this specific new node's saved mode (rather than setting
+      // currentMode directly) so switchFormFocus picks it up correctly once
+      // navigate()'s render actually focuses it
+      savedMode.set(node.id, "img2img");
       navigate(node.id);
     } catch (err) {
       alert(`Import failed: ${err.message}`);
