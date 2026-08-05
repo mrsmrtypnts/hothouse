@@ -305,7 +305,14 @@ button:disabled { opacity: 0.5; cursor: default; }
 }
 .detail-image.drop-target-active,
 .detail-form.drop-target-active {
-  box-shadow: 0 0 0 2px var(--accent-hover);
+  /* inset, not an outward ring -- .detail-image (overflow:hidden) and its
+     parent .detail-main (overflow-y:auto, which computes overflow-x to
+     auto too, clipping both axes) can clip an outward box-shadow wherever
+     the highlighted box's edge sits flush against one of those clipping
+     bounds, showing the ring on some sides but not others. Inset stays
+     entirely within the element's own border box, so it can't be clipped
+     by anything outside it. */
+  box-shadow: inset 0 0 0 2px var(--accent-hover);
 }
 .detail-image img {
   /* fills whatever space .detail-image actually has -- never more (so it
