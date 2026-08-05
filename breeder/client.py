@@ -52,8 +52,8 @@ async def check_progress(task_id: str) -> Optional[dict]:
         return data if data.get("imgs") else None
 
 
-async def _poll(task_id: str) -> dict:
-    deadline = time.monotonic() + POLL_TIMEOUT
+async def _poll(task_id: str, timeout: float = POLL_TIMEOUT) -> dict:
+    deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         data = await check_progress(task_id)
         if data is not None:
@@ -80,8 +80,8 @@ async def fetch_images(data: dict) -> list[tuple[bytes, Optional[str]]]:
         return [await _fetch_image(e, http) for e in data["imgs"]]
 
 
-async def poll_and_fetch(task_id: str) -> list[tuple[bytes, Optional[str]]]:
-    data = await _poll(task_id)
+async def poll_and_fetch(task_id: str, timeout: float = POLL_TIMEOUT) -> list[tuple[bytes, Optional[str]]]:
+    data = await _poll(task_id, timeout)
     return await fetch_images(data)
 
 

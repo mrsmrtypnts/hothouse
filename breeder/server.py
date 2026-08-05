@@ -227,6 +227,15 @@ def _record_reliability(spec: dict, success: bool, error: Optional[str] = None) 
 # "retry up to 3 times" -> 3 retries beyond the first attempt (4 tries total)
 MAX_TRANSIENT_RETRIES = 3
 TRANSIENT_RETRY_BACKOFF_SECONDS = 3
+# The first attempt gets the full client.POLL_TIMEOUT (240s) -- normal case,
+# no reason to shorten it. But a timed-out attempt already burned the full
+# window once; retrying with that same full window again would mean a
+# _render_semaphore slot (only 3 total) can be held for up to 4x
+# POLL_TIMEOUT (~16 minutes) if the backend is genuinely stuck rather than
+# just having had a quick blip, backing up everything else queued behind
+# it. Retries get a much shorter window instead: still enough to catch a
+# fast transient recovery, but bounded to ~7 minutes worst case overall.
+RETRY_POLL_TIMEOUT_SECONDS = 60
 
 # client._raise_for_status formats API errors as "<status> <API_BASE>: <detail>"
 # -- a leading 5xx means Diffus's own backend choked (e.g. "Task ... is
@@ -271,7 +280,8 @@ async def _render_node(
                 else:
                     task_id = await client.submit(spec)
                 await store.set_task_id(node_id, task_id)
-                images = await client.poll_and_fetch(task_id)
+                poll_timeout = client.POLL_TIMEOUT if attempt == 1 else RETRY_POLL_TIMEOUT_SECONDS
+                images = await client.poll_and_fetch(task_id, timeout=poll_timeout)
                 image_bytes, api_filename = images[0]
                 if parent_id and label:
                     image_bytes = _tag_lineage(image_bytes, parent_id, label)
