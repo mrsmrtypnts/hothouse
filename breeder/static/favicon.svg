@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
-  <g fill="#ff2d95">
+  <g fill="#ff2d95" transform="rotate(45 16 16)">
     <path d="M0,0 C-7,9 -7,9 -7,13.5 C-7,17.7 -3.9,20 0,20 C3.9,20 7,17.7 7,13.5 C7,9 7,9 0,0 Z" transform="translate(16,16) rotate(0) scale(0.55)"/>
     <path d="M0,0 C-7,9 -7,9 -7,13.5 C-7,17.7 -3.9,20 0,20 C3.9,20 7,17.7 7,13.5 C7,9 7,9 0,0 Z" transform="translate(16,16) rotate(90) scale(0.55)"/>
     <path d="M0,0 C-7,9 -7,9 -7,13.5 C-7,17.7 -3.9,20 0,20 C3.9,20 7,17.7 7,13.5 C7,9 7,9 0,0 Z" transform="translate(16,16) rotate(180) scale(0.55)"/>
