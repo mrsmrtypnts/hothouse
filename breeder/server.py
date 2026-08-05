@@ -406,6 +406,15 @@ async def get_node(node_id: str):
     return node
 
 
+def _img2img_init_bytes(node: dict) -> Optional[bytes]:
+    if node.get("render_mode") != "img2img" or not node["parent_id"]:
+        return None
+    parent = store.get(node["parent_id"])
+    if parent and parent.get("image_file"):
+        return (config.IMAGE_DIR / parent["image_file"]).read_bytes()
+    return None
+
+
 @app.post("/api/nodes/{node_id}/retry")
 async def retry_node(node_id: str):
     node = store.get(node_id)
@@ -414,11 +423,7 @@ async def retry_node(node_id: str):
     if node["status"] != "error":
         raise HTTPException(400, "node is not in an error state")
     render_mode = node.get("render_mode", "txt2img")
-    init_bytes = None
-    if render_mode == "img2img" and node["parent_id"]:
-        parent = store.get(node["parent_id"])
-        if parent and parent.get("image_file"):
-            init_bytes = (config.IMAGE_DIR / parent["image_file"]).read_bytes()
+    init_bytes = _img2img_init_bytes(node)
     await store.mark_pending(node_id)
     asyncio.create_task(
         _render_node(node_id, node["spec"], node["parent_id"], node["label"], render_mode, init_bytes)
@@ -506,31 +511,48 @@ async def get_asset_health():
     return reliability.summary()
 
 
+async def _resume_interrupted_node(node: dict) -> None:
+    """A node still "pending" at the moment the server last stopped has no
+    task left running its render loop. If it got as far as having a
+    task_id, check once whether Diffus actually finished it while we were
+    down -- cheap, and avoids burning a whole extra generation for no
+    reason. Otherwise (or if that check itself fails), fall through to a
+    full fresh resubmit via _render_node, exactly like pressing the manual
+    Retry button -- except automatic, so an interrupted batch doesn't just
+    sit there showing an error the next time Studio loads."""
+    task_id = node.get("task_id")
+    if task_id:
+        try:
+            data = await client.check_progress(task_id)
+        except Exception:
+            data = None
+        if data is not None:
+            try:
+                images = await client.fetch_images(data)
+                image_bytes, api_filename = images[0]
+                if node["parent_id"] and node["label"]:
+                    image_bytes = _tag_lineage(image_bytes, node["parent_id"], node["label"])
+                filename = api_filename or _image_filename(node["id"], node["spec"])
+                (config.IMAGE_DIR / filename).write_bytes(image_bytes)
+                await store.mark_done(node["id"], filename)
+                _record_reliability(node["spec"], success=True)
+                return
+            except Exception:
+                pass  # fetching/saving the already-finished result failed -- fall through and resubmit fresh
+
+    render_mode = node.get("render_mode", "txt2img")
+    init_bytes = _img2img_init_bytes(node)
+    await _render_node(node["id"], node["spec"], node["parent_id"], node["label"], render_mode, init_bytes)
+
+
 @app.on_event("startup")
 async def recover_orphaned_renders() -> None:
-    for node in store.pending_with_task_id():
-        try:
-            data = await client.check_progress(node["task_id"])
-        except Exception as exc:
-            await store.mark_error(node["id"], f"interrupted (server restart): {exc}")
-            continue
-        if data is None:
-            await store.mark_error(
-                node["id"], "interrupted (server restart); task may still be running on Diffus"
-            )
-            continue
-        try:
-            images = await client.fetch_images(data)
-            image_bytes, api_filename = images[0]
-            if node["parent_id"] and node["label"]:
-                image_bytes = _tag_lineage(image_bytes, node["parent_id"], node["label"])
-            filename = api_filename or _image_filename(node["id"], node["spec"])
-            (config.IMAGE_DIR / filename).write_bytes(image_bytes)
-            await store.mark_done(node["id"], filename)
-            _record_reliability(node["spec"], success=True)
-        except Exception as exc:
-            await store.mark_error(node["id"], str(exc))
-            _record_reliability(node["spec"], success=False, error=str(exc))
+    # fire-and-forget per node, same reasoning as the corpus auto-scan: a
+    # resume can take a while (up to the full render_node retry budget),
+    # and awaiting them here would block uvicorn from accepting any
+    # connections until every interrupted node finished resolving
+    for node in store.pending():
+        asyncio.create_task(_resume_interrupted_node(node))
 
 
 app.mount("/images", StaticFiles(directory=str(config.IMAGE_DIR)), name="images")

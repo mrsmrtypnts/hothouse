@@ -41,18 +41,12 @@ def _load() -> None:
     if config.TREE_PATH.exists():
         raw = json.loads(config.TREE_PATH.read_text())
         _nodes.update({n["id"]: n for n in raw})
-        # any node still "pending" from a previous process has no task left to
-        # finish it. If we know its task_id, leave it pending -- a startup
-        # recovery pass will check whether Diffus finished it anyway before
-        # giving up. Otherwise there's nothing to recover, so error it out.
-        stale = False
-        for n in _nodes.values():
-            if n["status"] == "pending" and not n.get("task_id"):
-                n["status"] = "error"
-                n["error"] = "interrupted (server restart)"
-                stale = True
-        backfilled = _backfill_batch_ids()
-        if stale or backfilled:
+        # any node still "pending" from a previous process (whether or not it
+        # got as far as having a task_id) is picked up and automatically
+        # resumed by server.py's startup recovery pass -- see
+        # recover_orphaned_renders / _resume_interrupted_node. Left alone
+        # here; nothing to do at load time.
+        if _backfill_batch_ids():
             _save()
 
 
@@ -97,8 +91,8 @@ async def set_task_id(node_id: str, task_id: str) -> None:
         _save()
 
 
-def pending_with_task_id() -> list[dict]:
-    return [n for n in _nodes.values() if n["status"] == "pending" and n.get("task_id")]
+def pending() -> list[dict]:
+    return [n for n in _nodes.values() if n["status"] == "pending"]
 
 
 async def mark_done(node_id: str, image_file: str) -> None:
