@@ -1646,8 +1646,24 @@ async function render(isPoll = false) {
     pollTimer = setTimeout(() => render(true), 1500);
     return;
   }
+  if (isPoll && hoverEl) {
+    // same gotcha again, this time for the breadcrumb hover-preview panel:
+    // rebuilding destroys the hovered element (crumbEl), and a *removed*
+    // element never gets a mouseleave -- so hideHoverPreview (bound to that
+    // listener) never fires, and the panel (a separate document.body node)
+    // is orphaned, stuck showing stale content until something else happens
+    // to touch it. Defer instead, same as the isEditingUI case above.
+    pollTimer = setTimeout(() => render(true), 1500);
+    return;
+  }
 
   stopPolling();
+  // belt-and-suspenders for the same issue: any render that *does* proceed
+  // (this one, or a non-poll one e.g. from clicking the very thumb being
+  // hovered to navigate to it) is about to tear down whatever DOM the hover
+  // panel's anchor lived in, so clear it explicitly rather than leaving it
+  // orphaned -- don't rely solely on deferral above to prevent staleness.
+  hideHoverPreview();
   // root.replaceChildren below rebuilds .browser-panel from scratch, which
   // resets scroll position to 0 as a side effect regardless of whether we
   // explicitly scroll anywhere -- same render() gotcha as the focus-loss
