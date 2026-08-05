@@ -42,6 +42,23 @@ else:
 }
 
 CONFIGURED_PORT="$("$VENV_DIR/bin/python3" -c "import config; print(config.PORT)")"
+
+# Give the configured port a couple seconds' grace before concluding
+# something else actually wants it and falling back to the next one, in
+# case whatever was just using it (e.g. a previous instance mid-shutdown)
+# hasn't fully released it yet. Cheap insurance either way: adds no delay
+# when the port's already free, and a silent drift to a new port breaks
+# anything scoped to the old port's origin -- e.g. Studio's per-origin
+# "viewed" tracking, which then looks like every thumbnail went unread.
+# (Root cause of one specific instance of this is still unconfirmed --
+# a clean, several-second-old shutdown shouldn't need this at all, so
+# something else may have briefly held the port instead.)
+GRACE_TRIES=0
+while port_in_use "$CONFIGURED_PORT" && [ "$GRACE_TRIES" -lt 10 ]; do
+    GRACE_TRIES=$((GRACE_TRIES + 1))
+    sleep 0.2
+done
+
 PORT="$CONFIGURED_PORT"
 TRIES=0
 while port_in_use "$PORT"; do
