@@ -208,7 +208,17 @@ let currentDenoise = 0.75;
 // Stashes the outgoing focus's in-progress state (if any) and restores
 // whatever was previously saved for the incoming one. Returns true if focus
 // actually changed (i.e. the form needs rebuilding from some seed spec).
-function switchFormFocus(newFocusId) {
+//
+// `defaultMode`/`defaultDenoise` are this node's own render_mode/
+// denoising_strength -- the very first time a node is focused (nothing in
+// savedMode/savedDenoise yet), its breed controls should start from how it
+// was itself generated, not a hardcoded txt2img/0.75: a node born via
+// img2img should start life expecting to breed the same way, and a node
+// bred at denoising_strength 0.4 should offer 0.4 as the starting point,
+// not always reset to 0.75. Once you've actually touched the toggle/slider
+// for a given node in this tab, that sticks (see savedMode/savedDenoise
+// above) and wins over these defaults on every future visit.
+function switchFormFocus(newFocusId, defaultMode = "txt2img", defaultDenoise = 0.75) {
   const changed = formFocusId !== newFocusId;
   if (changed) {
     if (formFocusId != null) {
@@ -221,8 +231,8 @@ function switchFormFocus(newFocusId) {
     formFocusId = newFocusId;
     promptDiffDismissed = savedPromptDismissed.get(newFocusId) || false;
     negPromptDiffDismissed = savedNegPromptDismissed.get(newFocusId) || false;
-    currentMode = savedMode.get(newFocusId) || "txt2img";
-    currentDenoise = savedDenoise.has(newFocusId) ? savedDenoise.get(newFocusId) : 0.75;
+    currentMode = savedMode.has(newFocusId) ? savedMode.get(newFocusId) : defaultMode;
+    currentDenoise = savedDenoise.has(newFocusId) ? savedDenoise.get(newFocusId) : defaultDenoise;
   }
   return changed;
 }
@@ -1581,7 +1591,9 @@ async function buildDetailPanel(focusId, knownModels) {
   }
   main.appendChild(imageBox);
 
-  const rebuildForm = switchFormFocus(focusId);
+  const rebuildForm = switchFormFocus(
+    focusId, node.render_mode || "txt2img", node.spec.denoising_strength ?? 0.75
+  );
   const parentNode = ancestors.length >= 2 ? ancestors[ancestors.length - 2] : null;
   const seedSpec = rebuildForm ? (savedFormSpecs.get(focusId) ?? node.spec) : formSpec;
   const formEl = buildForm(seedSpec, knownModels, parentNode && parentNode.spec);
