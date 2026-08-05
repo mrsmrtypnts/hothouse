@@ -513,9 +513,15 @@ function buildCorpusPanel() {
     // a scan (startup or periodic) is running in the background -- keep
     // checking back until it finishes rather than leaving this stale, since
     // a large corpus can take a while and there's otherwise no sign it's
-    // doing anything at all
+    // doing anything at all.
+    // isPoll=true is load-bearing here, not optional -- render()'s default
+    // (isPoll=false) skips the isEditingUI() check entirely, so this would
+    // otherwise tear down and rebuild the whole page (yanking focus out of
+    // the prompt box, mid-scroll resets, ...) every 2s for as long as a
+    // large corpus takes to scan, regardless of what you were doing. See
+    // the "render() gotcha" note elsewhere in this file.
     wrap.appendChild(el("div", { class: "corpus-scanning", text: "scanning..." }));
-    setTimeout(() => render(), 2000);
+    setTimeout(() => render(true), 2000);
   }
 
   const rescanBtn = el("button", { type: "button", class: "corpus-rescan-btn", text: "rescan now" });
@@ -559,7 +565,7 @@ function buildBrowserPanel(allNodes, focusId) {
 
   function renderGrid() {
     const keyword = keywordInput.value;
-    const minDescendants = parseInt(minDescendantsInput.value, 10) || 0;
+    const minDescendants = parseInt(minDescendantsSelect.value, 10) || 0;
     grid.replaceChildren();
     for (const node of allNodes) {
       if (minDescendants > 0 && (descendantCounts.get(node.id) || 0) < minDescendants) continue;
@@ -596,20 +602,29 @@ function buildBrowserPanel(allNodes, focusId) {
   keywordWrap.appendChild(keywordInput);
   keywordWrap.appendChild(keywordClear);
 
-  // a plain number input rather than a preset dropdown: total descendant
-  // count has no natural small ceiling the way chain-depth did (a widely-bred
-  // lineage can easily rack up dozens or hundreds), so a fixed list of
-  // thresholds would either be too coarse or need constant retuning
+  // preset buckets, not a free-typed number: a plain number input had no
+  // affordance to jump back to 0 and no way to jump straight to a large
+  // threshold (just the native spinner's +/-1, useless once you're past a
+  // handful) -- "N+" buckets fix both, and 0+ doubles as the reset state,
+  // so there's no separate reset control needed
+  const DESCENDANT_THRESHOLDS = [0, 1, 2, 5, 10, 20, 50, 100];
   const descendantsWrap = el("div", { class: "descendants-filter-wrap" });
-  descendantsWrap.appendChild(el("span", { class: "filter-label", text: "min descendants" }));
-  const minDescendantsInput = el("input", { type: "number", min: "0", step: "1" });
-  minDescendantsInput.value = String(getMinDescendantCount());
-  minDescendantsInput.title = "only show items with at least this many total descendants (children, grandchildren, etc.)";
-  minDescendantsInput.addEventListener("input", () => {
-    setMinDescendantCount(parseInt(minDescendantsInput.value, 10) || 0);
+  descendantsWrap.appendChild(el("span", { class: "filter-label", text: "Descendants" }));
+  const minDescendantsSelect = el("select");
+  for (const n of DESCENDANT_THRESHOLDS) {
+    minDescendantsSelect.appendChild(el("option", { value: String(n), text: `${n}+` }));
+  }
+  // a stored value from before this was a fixed set of buckets (or any
+  // other stray value) -- fall back to the largest bucket at or below it
+  const stored = getMinDescendantCount();
+  const initial = [...DESCENDANT_THRESHOLDS].reverse().find((n) => n <= stored) ?? 0;
+  minDescendantsSelect.value = String(initial);
+  minDescendantsSelect.title = "only show items with at least this many total descendants (children, grandchildren, etc.)";
+  minDescendantsSelect.addEventListener("change", () => {
+    setMinDescendantCount(parseInt(minDescendantsSelect.value, 10) || 0);
     renderGrid();
   });
-  descendantsWrap.appendChild(minDescendantsInput);
+  descendantsWrap.appendChild(minDescendantsSelect);
 
   filterBar.appendChild(keywordWrap);
   filterBar.appendChild(descendantsWrap);
