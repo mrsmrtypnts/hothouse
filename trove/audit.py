@@ -253,11 +253,20 @@ def run_audit(files: list[dict], weights: dict, budget_bytes: int,
               n_sample: int = 20, salt: bytes = b"", config: dict = None):
     """
     Print audit report:
-    - Top n_sample files by score
-    - Bottom n_sample files by score
-    - Random sample of n_sample from the middle
-    - ASCII histogram of score distribution
+    - Top/middle/bottom n_sample files by score, *within the projected
+      pack at budget_bytes* (not the whole library — see below)
+    - ASCII histogram of the whole library's score distribution
     - Projected pack stats at budget_bytes
+
+    The stratified sample is scoped to the pack, not the full scanned
+    population: with a large library, "bottom of everything" is almost
+    always junk that was never in contention for any realistic budget,
+    and "middle of everything" doesn't correspond to anything you'd
+    actually get. Scoping to the pack means "bottom" shows the weakest
+    files that still made the cut — a genuinely useful sanity check —
+    and "top"/"middle" show the best/typical picks. The histogram stays
+    library-wide, since seeing the full distribution (not just the sliver
+    that got packed) is what makes it useful as context.
     """
     if config is None:
         config = {}
@@ -270,6 +279,9 @@ def run_audit(files: list[dict], weights: dict, budget_bytes: int,
     sorted_files = sorted(files, key=lambda f: f.get("score", 0), reverse=True)
     scores = [f.get("score", 0) for f in sorted_files]
     total_size = sum(f.get("size", 0) for f in files)
+
+    selected = packlib.greedy_pack(files, budget_bytes)
+    packed_sorted = sorted(selected, key=lambda f: f.get("score", 0), reverse=True)
 
     # --- Feature weights summary ---
     console.print()
@@ -294,29 +306,32 @@ def run_audit(files: list[dict], weights: dict, budget_bytes: int,
     console.print(f"  Score range:    {min(scores):.3f} – {max(scores):.3f}")
     console.print()
 
-    # --- Stratified sample ---
-    top = sorted_files[:n_sample]
+    # --- Stratified sample (within the projected pack, not the whole library) ---
+    if not packed_sorted:
+        console.print("[red]Budget too small — no files would be packed. "
+                      "Skipping stratified sample.[/red]\n")
+    else:
+        top = packed_sorted[:n_sample]
 
-    bottom = sorted_files[-n_sample:]
+        bottom = packed_sorted[-n_sample:]
 
-    mid_start = len(sorted_files) // 2 - n_sample
-    mid_end = len(sorted_files) // 2 + n_sample
-    mid_pool = sorted_files[max(0, mid_start):mid_end]
-    middle = random.sample(mid_pool, min(n_sample, len(mid_pool)))
-    middle.sort(key=lambda f: f.get("score", 0), reverse=True)
+        mid_start = len(packed_sorted) // 2 - n_sample
+        mid_end = len(packed_sorted) // 2 + n_sample
+        mid_pool = packed_sorted[max(0, mid_start):mid_end]
+        middle = random.sample(mid_pool, min(n_sample, len(mid_pool)))
+        middle.sort(key=lambda f: f.get("score", 0), reverse=True)
 
-    console.print(_make_table(f"Top {len(top)} files", top, weights, legend))
-    console.print(_make_table(f"Middle sample ({len(middle)} files)", middle, weights, legend))
-    console.print(_make_table(f"Bottom {len(bottom)} files", bottom, weights, legend))
+        console.print(_make_table(f"Top {len(top)} files (in pack)", top, weights, legend))
+        console.print(_make_table(f"Middle sample ({len(middle)} files, in pack)", middle, weights, legend))
+        console.print(_make_table(f"Bottom {len(bottom)} files (in pack — weakest that still made the cut)", bottom, weights, legend))
 
     # --- Score histogram ---
-    console.rule("[bold]Score distribution[/bold]")
+    console.rule("[bold]Score distribution[/bold] [dim](whole library)[/dim]")
     console.print(_histogram(scores))
     console.print()
 
     # --- Projected pack ---
     console.rule("[bold]Projected pack[/bold]")
-    selected = packlib.greedy_pack(files, budget_bytes)
     stats = packlib.pack_stats(selected, budget_bytes)
     console.print(f"  Files selected:   [bold]{stats['file_count']:,}[/bold]")
     console.print(f"  Total size:       [bold]{stats['total_size_gb']:.1f} GB[/bold] "
