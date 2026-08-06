@@ -56,6 +56,14 @@ def copy_files(selected: list[dict], dest_dir: str,
     Copy selected files to dest_dir, preserving relative path structure.
     Returns stats dict.
 
+    progress, if given, is called once per file after it's been handled
+    (copied, skipped, or errored) as progress(path, size_bytes). Reporting
+    size rather than just a per-file tick lets a caller drive a
+    byte-weighted progress bar — a flat "1 file = 1 unit" badly skews
+    display when file sizes vary a lot, e.g. a handful of multi-GB videos
+    among thousands of small photos. Firing after (not before) each file
+    keeps the reported progress matching what's actually landed on disk.
+
     Callers wanting a dry run should skip calling this entirely (see
     cmd_pack in bin/trove, which prints the projected selection and
     returns before ever reaching copy_files).
@@ -70,8 +78,6 @@ def copy_files(selected: list[dict], dest_dir: str,
         # Preserve full absolute path under dest to avoid collisions
         rel = src.relative_to(src.anchor)
         dst = dest / rel
-        if progress:
-            progress(str(src))
         try:
             dst.parent.mkdir(parents=True, exist_ok=True)
             if dst.exists():
@@ -81,5 +87,8 @@ def copy_files(selected: list[dict], dest_dir: str,
                 copied += 1
         except Exception as e:
             errors.append({"path": str(src), "error": str(e)})
+        finally:
+            if progress:
+                progress(str(src), f.get("size", 0))
 
     return {"copied": copied, "skipped": skipped, "errors": errors}

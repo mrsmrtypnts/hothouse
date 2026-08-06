@@ -227,11 +227,29 @@ def cmd_pack(args):
             print(f"  {f.get('score', 0):>7.3f}  {_human_size(f.get('size', 0)):>9}  {f['path']}")
         return
 
-    from rich.progress import Progress
-    with Progress() as progress:
-        task = progress.add_task("Copying...", total=len(selected))
-        def cb(path):
-            progress.advance(task)
+    from rich.progress import (
+        Progress, TextColumn, BarColumn, TaskProgressColumn,
+        DownloadColumn, TransferSpeedColumn, TimeRemainingColumn,
+    )
+    # Weighted by bytes, not file count — a flat per-file tick badly
+    # misrepresents progress when a handful of huge videos sit among
+    # thousands of small photos (e.g. showing "25% done" after copying
+    # only a fraction of the actual bytes). DownloadColumn/
+    # TransferSpeedColumn default to decimal units, matching the rest
+    # of trove.
+    columns = (
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        DownloadColumn(),
+        TransferSpeedColumn(),
+        TimeRemainingColumn(),
+    )
+    total_bytes = sum(f.get("size", 0) for f in selected)
+    with Progress(*columns) as progress:
+        task = progress.add_task("Copying...", total=total_bytes)
+        def cb(path, size):
+            progress.advance(task, size)
         result = pack.copy_files(selected, args.dest_dir, progress=cb)
 
     print(f"Copied: {result['copied']}, Skipped: {result['skipped']}, Errors: {len(result['errors'])}")
