@@ -1,0 +1,281 @@
+#!/usr/bin/env python3
+"""
+trove — select and mirror your highest-value media files.
+
+On first run, transparently creates a private venv and installs its
+dependencies (see trove/requirements.txt) — no manual pip install needed.
+
+Usage:
+  trove scan <source_dir>...          Scan source dirs and cache file list
+  trove scan --info                   Show cache status
+  trove compare [--n N]               Run pairwise comparison session
+  trove audit [--budget GB]           Dry-run: show scored sample + stats
+  trove pack <dest_dir> [--budget GB] Copy top files to dest_dir
+"""
+
+import hashlib
+import subprocess
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+REQUIREMENTS = REPO_ROOT / "trove" / "requirements.txt"
+VENV_DIR = Path.home() / ".local" / "share" / "trove" / "venv"
+VENV_PYTHON = VENV_DIR / "bin" / "python3"
+REQUIREMENTS_HASH_FILE = VENV_DIR / ".requirements.sha256"
+
+
+def _requirements_hash() -> str:
+    return hashlib.sha256(REQUIREMENTS.read_bytes()).hexdigest()
+
+
+def _venv_is_current() -> bool:
+    return (
+        VENV_PYTHON.exists()
+        and REQUIREMENTS_HASH_FILE.exists()
+        and REQUIREMENTS_HASH_FILE.read_text().strip() == _requirements_hash()
+    )
+
+
+def _run(cmd: list[str]) -> None:
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        sys.stderr.write(result.stdout)
+        sys.stderr.write(result.stderr)
+        sys.exit(
+            f"trove: command failed ({' '.join(cmd)}), see output above."
+        )
+
+
+def _venv_site_packages() -> Path:
+    # Standard POSIX venv layout. Safe to compute statically (rather than
+    # asking the venv itself) because the venv is always created from this
+    # exact running interpreter, so the version tag matches by construction.
+    return VENV_DIR / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}" / "site-packages"
+
+
+def _ensure_venv() -> None:
+    if _venv_is_current():
+        return
+    print("trove: setting up its Python environment (first run only)...", file=sys.stderr)
+    VENV_DIR.parent.mkdir(parents=True, exist_ok=True)
+    _run([sys.executable, "-m", "venv", "--upgrade-deps", str(VENV_DIR)])
+    VENV_DIR.chmod(0o700)
+    _run([str(VENV_PYTHON), "-m", "pip", "install", "-r", str(REQUIREMENTS)])
+    _run([str(VENV_PYTHON), "-c", "import rich"])
+    REQUIREMENTS_HASH_FILE.write_text(_requirements_hash())
+
+
+# Rather than re-exec'ing into the venv's own python3 (which relies on that
+# interpreter correctly self-detecting it's running inside a venv — this can
+# silently fail depending on how python3 is installed/shimmed on a given
+# account), just add the venv's site-packages onto the current process's
+# sys.path. Safe because the venv was built from this exact interpreter.
+_ensure_venv()
+
+import argparse
+import site
+
+site.addsitedir(str(_venv_site_packages()))
+sys.path.insert(0, str(REPO_ROOT))
+
+from trove import scan, features, model, pack, audit, compare
+
+
+DEFAULT_BUDGET_GB = 200
+
+
+def gb_to_bytes(gb: float) -> int:
+    return int(gb * 1024 ** 3)
+
+
+def load_scored_files(salt, config):
+    """Load cache, attach feature vectors and scores."""
+    weights = model.load_weights()
+    files = scan.load_cache()
+    if not files:
+        print("No scan cache found. Run: trove scan <dir>...", file=sys.stderr)
+        sys.exit(1)
+    for f in files:
+        f["feature_vec"] = features.extract_features(f, config, salt)
+        f["score"] = model.score(f["feature_vec"], weights)
+    return files, weights
+
+
+# ---------------------------------------------------------------------------
+# scan
+# ---------------------------------------------------------------------------
+
+def cmd_scan(args):
+    if args.info:
+        info = scan.cache_info()
+        if not info["exists"]:
+            print("No cache found.")
+        else:
+            print(f"Files:      {info['file_count']:,}")
+            print(f"Total size: {info['total_size_gb']:.1f} GB")
+            print(f"Cache age:  {info['cache_age_hours']:.1f} hours")
+        return
+
+    if not args.source_dirs:
+        print("Provide at least one source directory.", file=sys.stderr)
+        sys.exit(1)
+
+    from rich.progress import Progress, SpinnerColumn, TextColumn
+    from rich.console import Console
+    console = Console()
+
+    count = 0
+    def progress_cb(path):
+        nonlocal count
+        count += 1
+        if count % 500 == 0:
+            console.print(f"  {count:,} files found...", end="\r")
+
+    console.print(f"Scanning {len(args.source_dirs)} director(ies)...")
+    files = scan.scan_dirs(args.source_dirs, progress=progress_cb)
+    scan.save_cache(files)
+
+    total_gb = sum(f["size"] for f in files) / 1024**3
+    console.print(f"\nDone. Found [bold]{len(files):,}[/bold] files ({total_gb:.1f} GB). Cache saved.")
+
+
+# ---------------------------------------------------------------------------
+# compare
+# ---------------------------------------------------------------------------
+
+def cmd_compare(args):
+    salt = features.load_salt()
+    config = features.load_feature_config()
+    files, weights = load_scored_files(salt, config)
+
+    comparisons_path = Path.home() / ".local" / "share" / "trove" / "comparisons.jsonl"
+
+    compare.run_compare_session(
+        files=files,
+        weights=weights,
+        config=config,
+        salt=salt,
+        comparisons_path=comparisons_path,
+        n_comparisons=args.n,
+    )
+
+
+# ---------------------------------------------------------------------------
+# audit
+# ---------------------------------------------------------------------------
+
+def cmd_audit(args):
+    salt = features.load_salt()
+    config = features.load_feature_config()
+    files, weights = load_scored_files(salt, config)
+    budget = gb_to_bytes(args.budget)
+
+    audit.run_audit(files=files, weights=weights, budget_bytes=budget,
+                    salt=salt, config=config)
+
+
+# ---------------------------------------------------------------------------
+# prune
+# ---------------------------------------------------------------------------
+
+def cmd_prune(args):
+    salt = features.load_salt()
+    config = features.load_feature_config()
+    files, weights = load_scored_files(salt, config)
+
+    pruned, removed = model.prune_weights(weights, files)
+    if not removed:
+        print("Nothing to prune — all weight keys are live.")
+        return
+
+    print(f"Removing {len(removed)} dead feature(s):")
+    for k in removed:
+        print(f"  {k}")
+    model.save_weights(pruned)
+    print("Model saved.")
+
+
+# ---------------------------------------------------------------------------
+# pack
+# ---------------------------------------------------------------------------
+
+def cmd_pack(args):
+    salt = features.load_salt()
+    config = features.load_feature_config()
+    files, weights = load_scored_files(salt, config)
+    budget = gb_to_bytes(args.budget)
+
+    selected = pack.greedy_pack(files, budget)
+    stats = pack.pack_stats(selected, budget)
+
+    print(f"Selected {stats['file_count']:,} files ({stats['total_size_gb']:.1f} GB / "
+          f"{stats['budget_gb']:.0f} GB, {stats['utilization_pct']:.1f}% utilized)")
+
+    if args.dry_run:
+        print("Dry run — no files copied.")
+        return
+
+    from rich.progress import Progress
+    with Progress() as progress:
+        task = progress.add_task("Copying...", total=len(selected))
+        def cb(path):
+            progress.advance(task)
+        result = pack.copy_files(selected, args.dest_dir, progress=cb)
+
+    print(f"Copied: {result['copied']}, Skipped: {result['skipped']}, Errors: {len(result['errors'])}")
+    if result["errors"]:
+        for e in result["errors"][:10]:
+            print(f"  ERROR {e['path']}: {e['error']}")
+
+
+# ---------------------------------------------------------------------------
+# Argument parsing
+# ---------------------------------------------------------------------------
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="trove — select and mirror your highest-value media files",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    # scan
+    p_scan = sub.add_parser("scan", help="Scan source directories and cache file list")
+    p_scan.add_argument("source_dirs", nargs="*", metavar="DIR")
+    p_scan.add_argument("--info", action="store_true", help="Show cache status")
+
+    # compare
+    p_compare = sub.add_parser("compare", help="Run pairwise comparison session")
+    p_compare.add_argument("--n", type=int, default=None, metavar="N",
+                           help="Stop after N comparisons")
+
+    # audit
+    p_audit = sub.add_parser("audit", help="Dry-run: show scored sample and stats")
+    p_audit.add_argument("--budget", type=float, default=DEFAULT_BUDGET_GB, metavar="GB",
+                         help=f"Space budget in GB (default: {DEFAULT_BUDGET_GB})")
+
+    # prune
+    sub.add_parser("prune", help="Remove dead features from model weights")
+
+    # pack
+    p_pack = sub.add_parser("pack", help="Copy top-scoring files to destination")
+    p_pack.add_argument("dest_dir", metavar="DEST")
+    p_pack.add_argument("--budget", type=float, default=DEFAULT_BUDGET_GB, metavar="GB",
+                        help=f"Space budget in GB (default: {DEFAULT_BUDGET_GB})")
+    p_pack.add_argument("--dry-run", action="store_true", help="Show what would be copied")
+
+    args = parser.parse_args()
+
+    dispatch = {
+        "scan": cmd_scan,
+        "compare": cmd_compare,
+        "audit": cmd_audit,
+        "prune": cmd_prune,
+        "pack": cmd_pack,
+    }
+    dispatch[args.command](args)
+
+
+if __name__ == "__main__":
+    main()
