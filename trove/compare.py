@@ -41,9 +41,9 @@ def _read_key() -> str:
 
 def _human_size(size_bytes: int) -> str:
     for unit in ("B", "KB", "MB", "GB"):
-        if size_bytes < 1024:
+        if size_bytes < 1000:
             return f"{size_bytes:.1f} {unit}"
-        size_bytes /= 1024
+        size_bytes /= 1000
     return f"{size_bytes:.1f} TB"
 
 

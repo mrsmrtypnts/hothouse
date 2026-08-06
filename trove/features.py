@@ -108,13 +108,13 @@ def _ext_category(ext: str) -> str:
     return "other"
 
 _SIZE_BUCKETS = [
-    (1024 ** 3,      "size:1GB"),
-    (100 * 1024 ** 2, "size:100MB"),
-    (10 * 1024 ** 2,  "size:10MB"),
-    (1024 ** 2,       "size:1MB"),
-    (100 * 1024,      "size:100KB"),
-    (10 * 1024,       "size:10KB"),
-    (1024,            "size:1KB"),
+    (1000 ** 3,      "size:1GB"),
+    (100 * 1000 ** 2, "size:100MB"),
+    (10 * 1000 ** 2,  "size:10MB"),
+    (1000 ** 2,       "size:1MB"),
+    (100 * 1000,      "size:100KB"),
+    (10 * 1000,       "size:10KB"),
+    (1000,            "size:1KB"),
 ]
 
 def _size_bucket(size_bytes: int) -> str:

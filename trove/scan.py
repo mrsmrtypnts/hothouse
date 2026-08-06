@@ -86,7 +86,7 @@ def cache_info() -> dict:
     return {
         "exists": True,
         "file_count": len(files),
-        "total_size_gb": total_size / (1024 ** 3),
+        "total_size_gb": total_size / (1000 ** 3),
         "cache_mtime": stat.st_mtime,
         "cache_age_hours": (time.time() - stat.st_mtime) / 3600,
     }

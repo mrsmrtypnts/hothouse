@@ -86,14 +86,14 @@ DEFAULT_BUDGET_GB = 200
 
 
 def gb_to_bytes(gb: float) -> int:
-    return int(gb * 1024 ** 3)
+    return int(gb * 1000 ** 3)
 
 
 def _human_size(size_bytes: int) -> str:
     for unit in ("B", "KB", "MB", "GB"):
-        if size_bytes < 1024:
+        if size_bytes < 1000:
             return f"{size_bytes:.1f} {unit}"
-        size_bytes /= 1024
+        size_bytes /= 1000
     return f"{size_bytes:.1f} TB"
 
 
@@ -144,7 +144,7 @@ def cmd_scan(args):
     files = scan.scan_dirs(args.source_dirs, progress=progress_cb)
     scan.save_cache(files)
 
-    total_gb = sum(f["size"] for f in files) / 1024**3
+    total_gb = sum(f["size"] for f in files) / 1000**3
     console.print(f"\nDone. Found [bold]{len(files):,}[/bold] files ({total_gb:.1f} GB). Cache saved.")
 
 

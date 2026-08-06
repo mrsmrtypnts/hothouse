@@ -44,8 +44,8 @@ def pack_stats(selected: list[dict], budget_bytes: int) -> dict:
     return {
         "file_count": len(selected),
         "total_size_bytes": total,
-        "total_size_gb": total / (1024 ** 3),
-        "budget_gb": budget_bytes / (1024 ** 3),
+        "total_size_gb": total / (1000 ** 3),
+        "budget_gb": budget_bytes / (1000 ** 3),
         "utilization_pct": 100 * total / budget_bytes if budget_bytes else 0,
     }
 

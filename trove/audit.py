@@ -26,9 +26,9 @@ console = Console()
 
 def _human_size(size_bytes: int) -> str:
     for unit in ("B", "KB", "MB", "GB"):
-        if size_bytes < 1024:
+        if size_bytes < 1000:
             return f"{size_bytes:.1f} {unit}"
-        size_bytes /= 1024
+        size_bytes /= 1000
     return f"{size_bytes:.1f} TB"
 
 
@@ -167,8 +167,8 @@ def run_audit(files: list[dict], weights: dict, budget_bytes: int,
 
     # --- Summary header ---
     console.print(f"  Files in pool:  [bold]{len(files):,}[/bold]")
-    console.print(f"  Total size:     [bold]{total_size / 1024**3:.1f} GB[/bold]")
-    console.print(f"  Budget:         [bold]{budget_bytes / 1024**3:.0f} GB[/bold]")
+    console.print(f"  Total size:     [bold]{total_size / 1000**3:.1f} GB[/bold]")
+    console.print(f"  Budget:         [bold]{budget_bytes / 1000**3:.0f} GB[/bold]")
     console.print(f"  Score range:    {min(scores):.3f} – {max(scores):.3f}")
     console.print()
 
@@ -215,5 +215,5 @@ def run_audit(files: list[dict], weights: dict, budget_bytes: int,
     console.print("  By type:")
     for ext in sorted(ext_counts, key=lambda e: ext_sizes[e], reverse=True):
         console.print(f"    {ext:<8} {ext_counts[ext]:>6,} files   "
-                      f"{ext_sizes[ext]/1024**3:>6.1f} GB")
+                      f"{ext_sizes[ext]/1000**3:>6.1f} GB")
     console.print()
