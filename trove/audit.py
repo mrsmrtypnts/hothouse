@@ -4,6 +4,8 @@ Shows a stratified sample of scored files, score distribution histogram,
 and projected knapsack stats.
 """
 
+from __future__ import annotations
+
 import random
 import math
 from rich.console import Console
@@ -79,6 +81,123 @@ def _make_table(title: str, files: list[dict], weights: dict,
             feat_str or "—",
         )
     return table
+
+
+# ---------------------------------------------------------------------------
+# Cutoff samples at various budget thresholds
+# ---------------------------------------------------------------------------
+
+# 1-2-5 sequence from 10 MB to 1 TB, in GB (1024-based, matching the rest
+# of the codebase).
+CUTOFF_THRESHOLDS_GB = [
+    0.01, 0.02, 0.05,
+    0.1, 0.2, 0.5,
+    1, 2, 5,
+    10, 20, 50,
+    100, 200, 500,
+    1024,
+]
+
+
+def _gb_label(gb: float) -> str:
+    return "1 TB" if gb >= 1024 else f"{gb:g} GB"
+
+
+def _cutoff_window(ranked: list[dict], selected: list[dict], n: int = 5) -> list[dict]:
+    """
+    Return an n-file window of `ranked` straddling the pack cutoff for this
+    budget — the point where `selected` (greedy_select's output, in ranked
+    order) stops. Centered on the last selected file where possible.
+    """
+    path_to_idx = {f["path"]: i for i, f in enumerate(ranked)}
+    last_idx = path_to_idx[selected[-1]["path"]]
+    half = n // 2
+    lo = max(0, last_idx - half + 1)
+    hi = min(len(ranked), lo + n)
+    lo = max(0, hi - n)  # re-clamp lo if hi got capped near the end
+    return ranked[lo:hi]
+
+
+def _make_cutoff_table(title: str, window: list[dict], selected_paths: set,
+                       weights: dict, legend: dict) -> Table:
+    """
+    Like _make_table, but with a leading In/Out column — greedy_select can
+    skip an oversized file and pack a smaller one from further down the
+    ranking instead, so the cutoff isn't always a clean prefix and it's
+    worth showing which of these specific files actually made the cut.
+    """
+    table = Table(title=title, box=box.SIMPLE, show_lines=False,
+                  title_style="bold", expand=True)
+    table.add_column("In?", width=4, justify="center")
+    table.add_column("Score", style="yellow", width=7, justify="right")
+    table.add_column("Size", style="cyan", width=9, justify="right")
+    table.add_column("Type", style="cyan", width=5)
+    table.add_column("Path", style="white", no_wrap=False)
+    table.add_column("Top features", style="dim", no_wrap=False)
+
+    for f in window:
+        in_pack = f["path"] in selected_paths
+        mark = "[green]✓[/green]" if in_pack else "[red]✗[/red]"
+        fvec = f.get("feature_vec", {})
+        top = modellib.top_features(fvec, weights, n=3)
+        feat_str = "  ".join(
+            _feature_display(k, c, legend)
+            for k, c in top if abs(c) > 0.0001
+        )
+        from pathlib import Path
+        parts = Path(f["path"]).parts
+        display_path = str(Path(*parts[-5:])) if len(parts) >= 5 else f["path"]
+
+        table.add_row(
+            mark,
+            f"{f.get('score', 0):.3f}",
+            _human_size(f.get("size", 0)),
+            f.get("ext", "?").upper(),
+            display_path,
+            feat_str or "—",
+        )
+    return table
+
+
+def _print_cutoff_samples(files: list[dict], weights: dict, legend: dict) -> None:
+    """
+    For each budget threshold in CUTOFF_THRESHOLDS_GB, show the files
+    straddling the pack cutoff at that budget. Thresholds where the whole
+    library already fits, or where nothing fits yet, collapse to a single
+    dim line instead of a full table — so output length tracks the
+    library's actual size range rather than always printing all 16.
+    """
+    ranked = packlib.ranked_candidates(files)
+    if not ranked:
+        return
+    total_size = sum(f["size"] for f in ranked)
+
+    console.rule("[bold]Cutoff samples by budget[/bold]")
+    console.print("[dim]What would (barely) make the cut at each budget size[/dim]\n")
+
+    for gb in CUTOFF_THRESHOLDS_GB:
+        budget = int(gb * 1024 ** 3)
+        label = _gb_label(gb)
+
+        if budget >= total_size:
+            console.print(f"  [dim]{label}: entire library fits "
+                          f"({len(ranked):,} files, {total_size / 1024**3:.1f} GB)[/dim]")
+            continue
+
+        selected = packlib.greedy_select(ranked, budget)
+        if not selected:
+            smallest = _human_size(ranked[-1]["size"])
+            console.print(f"  [dim]{label}: budget too small — nothing fits "
+                          f"(smallest file is {smallest})[/dim]")
+            continue
+
+        window = _cutoff_window(ranked, selected, n=5)
+        selected_paths = {f["path"] for f in selected}
+        selected_size_gb = sum(f["size"] for f in selected) / 1024 ** 3
+        title = f"~{label} cutoff  ({len(selected):,} files, {selected_size_gb:.1f} GB)"
+        console.print(_make_cutoff_table(title, window, selected_paths, weights, legend))
+
+    console.print()
 
 
 # ---------------------------------------------------------------------------
@@ -200,3 +319,6 @@ def run_audit(files: list[dict], weights: dict, budget_bytes: int,
         console.print(f"    {ext:<8} {ext_counts[ext]:>6,} files   "
                       f"{ext_sizes[ext]/1024**3:>6.1f} GB")
     console.print()
+
+    # --- Cutoff samples across budget thresholds ---
+    _print_cutoff_samples(files, weights, legend)
