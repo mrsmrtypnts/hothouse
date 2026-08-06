@@ -103,16 +103,33 @@ def _gb_label(gb: float) -> str:
     return "1 TB" if gb >= 1024 else f"{gb:g} GB"
 
 
-def _cutoff_window(ranked: list[dict], selected: list[dict], n: int = 5) -> list[dict]:
+def _cutoff_window(ranked: list[dict], budget_bytes: int, n: int = 5) -> list[dict]:
     """
     Return an n-file window of `ranked` straddling the pack cutoff for this
-    budget — the point where `selected` (greedy_select's output, in ranked
-    order) stops. Centered on the last selected file where possible.
+    budget.
+
+    Centered on the *naive* prefix cutoff — where a plain (non-skipping)
+    cumulative sum first exceeds budget_bytes — rather than on the last
+    file greedy_select actually accepted. Those aren't the same thing:
+    greedy_select keeps walking past an oversized file and can still admit
+    a smaller one further down, so its last accepted item is by
+    definition the highest-ranked index of any accepted file — nothing
+    after it can ever be In. Centering there put 3 of every 5 rows at a
+    guaranteed Out with zero informational value. The naive-prefix index
+    has no such guarantee in either direction, so the window actually
+    shows the swaps: files just before it skipped for being oversized,
+    files just after it admitted because something earlier was skipped.
     """
-    path_to_idx = {f["path"]: i for i, f in enumerate(ranked)}
-    last_idx = path_to_idx[selected[-1]["path"]]
+    cum = 0
+    boundary_idx = len(ranked) - 1
+    for i, f in enumerate(ranked):
+        cum += f["size"]
+        if cum > budget_bytes:
+            boundary_idx = i
+            break
+
     half = n // 2
-    lo = max(0, last_idx - half + 1)
+    lo = max(0, boundary_idx - half)
     hi = min(len(ranked), lo + n)
     lo = max(0, hi - n)  # re-clamp lo if hi got capped near the end
     return ranked[lo:hi]
@@ -191,7 +208,7 @@ def _print_cutoff_samples(files: list[dict], weights: dict, legend: dict) -> Non
                           f"(smallest file is {smallest})[/dim]")
             continue
 
-        window = _cutoff_window(ranked, selected, n=5)
+        window = _cutoff_window(ranked, budget, n=5)
         selected_paths = {f["path"] for f in selected}
         selected_size_gb = sum(f["size"] for f in selected) / 1024 ** 3
         title = f"~{label} cutoff  ({len(selected):,} files, {selected_size_gb:.1f} GB)"
