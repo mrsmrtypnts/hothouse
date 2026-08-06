@@ -89,6 +89,14 @@ def gb_to_bytes(gb: float) -> int:
     return int(gb * 1024 ** 3)
 
 
+def _human_size(size_bytes: int) -> str:
+    for unit in ("B", "KB", "MB", "GB"):
+        if size_bytes < 1024:
+            return f"{size_bytes:.1f} {unit}"
+        size_bytes /= 1024
+    return f"{size_bytes:.1f} TB"
+
+
 def load_scored_files(salt, config):
     """Load cache, attach feature vectors and scores."""
     weights = model.load_weights()
@@ -213,7 +221,10 @@ def cmd_pack(args):
           f"{stats['budget_gb']:.0f} GB, {stats['utilization_pct']:.1f}% utilized)")
 
     if args.dry_run:
-        print("Dry run — no files copied.")
+        print("Dry run — no files copied. Files that would be selected "
+              "(score/size ratio order, highest first):\n")
+        for f in selected:
+            print(f"  {f.get('score', 0):>7.3f}  {_human_size(f.get('size', 0)):>9}  {f['path']}")
         return
 
     from rich.progress import Progress
