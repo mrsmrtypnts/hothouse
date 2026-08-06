@@ -1,4 +1,5 @@
 import json
+import os
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -28,7 +29,19 @@ _load()
 
 def _names_blamed_by_error(names: list[str], error: str) -> list[str]:
     error_lower = error.lower()
-    return [n for n in names if n.lower() in error_lower]
+    blamed = []
+    for n in names:
+        # model_name is stored with its file extension (e.g.
+        # "foo.safetensors"), but Diffus's "CHECKPOINT model 'foo' not
+        # found" error echoes back the bare name -- an exact-substring check
+        # against the full name never matches, so a checkpoint-not-found
+        # failure was silently never recorded against anything. Try the
+        # extension-stripped stem too (a no-op for names with no extension,
+        # e.g. loras).
+        stem = os.path.splitext(n)[0]
+        if n.lower() in error_lower or (stem and stem.lower() in error_lower):
+            blamed.append(n)
+    return blamed
 
 
 def _key(kind: str, name: str) -> str:

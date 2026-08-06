@@ -364,12 +364,29 @@ def _mutate_once_raw(
     return child, tag or "(no change)"
 
 
+def _replace_if_unreliable_model(spec: dict, tag: str) -> tuple[dict, str]:
+    # _swap_model only ever avoids *picking* a flagged-unreliable model when
+    # a swap mutation happens to fire (5% of "other" mutations) -- it does
+    # nothing for a model a child just inherited unchanged from its parent,
+    # which is the normal case for every mutation that isn't itself a model
+    # swap. Left alone, a model confirmed broken (e.g. "not found in your
+    # workspace") would just keep propagating to nearly every descendant.
+    # Force the swap here instead, unconditionally, whenever the model
+    # actually ending up in this child is known-bad -- regardless of what
+    # randomly fired above.
+    if spec.get("model_name") in reliability.unreliable_names("model"):
+        swap_tag = _swap_model(spec)
+        tag = f"{tag}, {swap_tag}" if tag and tag != "(no change)" else swap_tag
+    return spec, tag
+
+
 def mutate_once(
     spec: dict, reroll_probability: float, keyword_intensity: float, lora_intensity: float, other_intensity: float
 ) -> tuple[dict, str]:
     child, tag = _mutate_once_raw(spec, reroll_probability, keyword_intensity, lora_intensity, other_intensity)
     if child.get("prompt"):
         child["prompt"] = promptsyntax.normalize_prompt(child["prompt"])
+    child, tag = _replace_if_unreliable_model(child, tag)
     return child, tag
 
 
