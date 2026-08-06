@@ -103,6 +103,52 @@ def update_weights(weights: dict[str, float],
 # Active learning: pair selection
 # ---------------------------------------------------------------------------
 
+POOL_SIZE = 200
+TOP_FRACTION = 0.3       # "near the top of the distribution"
+TOP_BIAS_PROB = 0.85     # how often we restrict to that top slice
+
+
+def _biased_pool(candidates: list[dict], weights: dict[str, float],
+                 scored_cache: dict, top_fraction: float = TOP_FRACTION,
+                 top_bias_prob: float = TOP_BIAS_PROB,
+                 pool_size: int = POOL_SIZE) -> list[dict]:
+    """
+    Build the working pool for pair selection, biased toward high-scoring
+    files.
+
+    Low-scoring files are, by construction, never going to make it into a
+    size-budgeted pack — spending comparisons refining their exact order
+    is mostly wasted effort. Most of the time we restrict the pool to the
+    top `top_fraction` of candidates by current score; the rest of the
+    time we draw from the full population, so the model still gets
+    occasional signal about (and from) the long tail rather than going
+    completely blind to it.
+    """
+    def get_score(f):
+        fid = f["path"]
+        if fid not in scored_cache:
+            scored_cache[fid] = score(f["feature_vec"], weights)
+        return scored_cache[fid]
+
+    if len(candidates) <= pool_size:
+        return candidates
+
+    if weights and random.random() < top_bias_prob:
+        # Floor at 2 (not pool_size) so the restriction stays a genuine
+        # top_fraction even for pools not much bigger than pool_size — the
+        # len(source) <= pool_size check below already handles returning a
+        # smaller-than-pool_size source safely.
+        n_top = max(2, int(len(candidates) * top_fraction))
+        n_top = min(n_top, len(candidates))
+        source = sorted(candidates, key=get_score, reverse=True)[:n_top]
+    else:
+        source = candidates
+
+    if len(source) <= pool_size:
+        return source
+    return random.sample(source, pool_size)
+
+
 def _select_pair_uncertainty(candidates: list[dict], weights: dict[str, float],
                              scored_cache: dict) -> tuple[dict, dict, str] | None:
     """
@@ -236,11 +282,16 @@ def _select_pair_contrastive(candidates: list[dict],
 
 def select_pair(candidates: list[dict], weights: dict[str, float],
                 scored_cache: dict | None = None,
-                contrastive_prob: float = 0.5) -> tuple[dict, dict, str]:
+                contrastive_prob: float = 0.5,
+                top_fraction: float = TOP_FRACTION,
+                top_bias_prob: float = TOP_BIAS_PROB) -> tuple[dict, dict, str]:
     """
     Select a pair of files for comparison.
 
-    Alternates between two strategies:
+    First narrows the field to a working pool biased toward high-scoring
+    files (see _biased_pool) — comparisons among low-scoring files rarely
+    change what ends up in the pack. Within that pool, alternates between
+    two strategies:
     - Uncertainty sampling: pick the pair with the most similar predicted
       scores — maximises information about overall ranking.
     - Contrastive sampling: pick a pair that differs on a single undertrained
@@ -256,12 +307,16 @@ def select_pair(candidates: list[dict], weights: dict[str, float],
     if scored_cache is None:
         scored_cache = {}
 
+    pool = _biased_pool(candidates, weights, scored_cache, top_fraction, top_bias_prob)
+    if len(pool) < 2:
+        pool = candidates
+
     result = None
     if weights and random.random() < contrastive_prob:
-        result = _select_pair_contrastive(candidates, weights)
+        result = _select_pair_contrastive(pool, weights)
 
     if result is None:
-        result = _select_pair_uncertainty(candidates, weights, scored_cache)
+        result = _select_pair_uncertainty(pool, weights, scored_cache)
 
     if result is None:
         raise ValueError("No informative pairs found — all candidates have identical feature vectors. "

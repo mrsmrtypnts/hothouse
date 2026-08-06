@@ -100,7 +100,9 @@ def _histogram(scores: list[float], n_bins: int = 20, width: int = 40) -> str:
     max_count = max(bins)
     lines = []
     bin_width = (hi - lo) / n_bins
-    for i, count in enumerate(bins):
+    # High scores first (top of the printed histogram), low scores last.
+    for i in reversed(range(n_bins)):
+        count = bins[i]
         label = f"{lo + i * bin_width:+.2f}"
         bar = "█" * int(count / max_count * width)
         lines.append(f"  {label}  {bar}  {count}")
