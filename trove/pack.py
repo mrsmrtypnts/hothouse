@@ -11,42 +11,6 @@ import shutil
 from pathlib import Path
 
 
-def ranked_candidates(files: list[dict]) -> list[dict]:
-    """
-    Return valid (size > 0) files sorted by score/size ratio, descending —
-    the fill order greedy_pack uses. Exposed separately so callers that
-    need the same ranking at several different budgets (e.g. audit's
-    cutoff samples) can sort once and reuse it, instead of re-sorting per
-    budget.
-    """
-    candidates = [f for f in files if f.get("size", 0) > 0]
-    candidates.sort(key=lambda f: f.get("score", 0) / f["size"], reverse=True)
-    return candidates
-
-
-def greedy_select(sorted_candidates: list[dict], budget_bytes: int,
-                  min_score: float | None = None) -> list[dict]:
-    """
-    Fill budget_bytes greedily from a list already in ranked_candidates()
-    order.
-
-    min_score: if set, exclude files below this score threshold.
-    Returns the selected subset (in the same relative order).
-    """
-    candidates = sorted_candidates
-    if min_score is not None:
-        candidates = [f for f in candidates if f.get("score", 0) >= min_score]
-
-    selected = []
-    total = 0
-    for f in candidates:
-        if total + f["size"] <= budget_bytes:
-            selected.append(f)
-            total += f["size"]
-
-    return selected
-
-
 def greedy_pack(files: list[dict], budget_bytes: int,
                 min_score: float | None = None) -> list[dict]:
     """
@@ -58,7 +22,21 @@ def greedy_pack(files: list[dict], budget_bytes: int,
 
     Returns the selected subset.
     """
-    return greedy_select(ranked_candidates(files), budget_bytes, min_score)
+    candidates = [f for f in files if f.get("size", 0) > 0]
+    if min_score is not None:
+        candidates = [f for f in candidates if f.get("score", 0) >= min_score]
+
+    # Sort by score/size ratio descending
+    candidates.sort(key=lambda f: f.get("score", 0) / f["size"], reverse=True)
+
+    selected = []
+    total = 0
+    for f in candidates:
+        if total + f["size"] <= budget_bytes:
+            selected.append(f)
+            total += f["size"]
+
+    return selected
 
 
 def pack_stats(selected: list[dict], budget_bytes: int) -> dict:
