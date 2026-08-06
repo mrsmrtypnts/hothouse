@@ -8,6 +8,8 @@ The model is trained from pairwise comparisons using logistic regression:
 given (winner_vec, loser_vec), we want score(winner) > score(loser).
 """
 
+from __future__ import annotations
+
 import json
 import math
 import random

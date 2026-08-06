@@ -6,6 +6,8 @@ but are stored in the model as HMAC-SHA256 hashes so the repo reveals nothing
 about what characteristics define value.
 """
 
+from __future__ import annotations
+
 import hmac
 import hashlib
 import json

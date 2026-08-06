@@ -5,6 +5,8 @@ Given a list of scored files and a size budget, select files greedily
 by score/size ratio until the budget is filled.
 """
 
+from __future__ import annotations
+
 import shutil
 from pathlib import Path
 
