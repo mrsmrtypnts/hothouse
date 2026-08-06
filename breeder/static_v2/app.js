@@ -510,18 +510,14 @@ function buildCorpusPanel() {
   }
 
   if (s && s.scanning) {
-    // a scan (startup or periodic) is running in the background -- keep
-    // checking back until it finishes rather than leaving this stale, since
-    // a large corpus can take a while and there's otherwise no sign it's
-    // doing anything at all.
-    // isPoll=true is load-bearing here, not optional -- render()'s default
-    // (isPoll=false) skips the isEditingUI() check entirely, so this would
-    // otherwise tear down and rebuild the whole page (yanking focus out of
-    // the prompt box, mid-scroll resets, ...) every 2s for as long as a
-    // large corpus takes to scan, regardless of what you were doing. See
-    // the "render() gotcha" note elsewhere in this file.
+    // a scan (startup or periodic) is running in the background -- the
+    // "still scanning" case in render()'s own single poll-scheduling check
+    // below keeps checking back until it finishes, same mechanism as the
+    // pending-node case, rather than this panel scheduling its own
+    // independent timer (see the render() gotcha note there for why that
+    // was a real bug: an untracked, self-multiplying setTimeout chain that
+    // could pile up into a page-freezing request storm).
     wrap.appendChild(el("div", { class: "corpus-scanning", text: "scanning..." }));
-    setTimeout(() => render(true), 2000);
   }
 
   const rescanBtn = el("button", { type: "button", class: "corpus-rescan-btn", text: "rescan now" });
@@ -1732,7 +1728,18 @@ async function render(isPoll = false) {
     browserPanel.scrollTop = prevScrollTop;
   }
 
-  if (allNodes.some((n) => n.status === "pending")) {
+  // single poll-scheduling site, on purpose -- corpus scanning used to
+  // schedule its own independent setTimeout(() => render(true), 2000) from
+  // inside buildCorpusPanel, called on every render including the ones
+  // *this* check already schedules. Nothing tracked or cancelled that
+  // second timer, so it could compound: any render while a scan was still
+  // running spawned another one, each of which (being a full render) could
+  // spawn yet another -- an untracked, self-multiplying chain of full page
+  // rebuilds + 3 API calls each, which is exactly what a page-freezing
+  // request storm looks like. Folding it in here means there's exactly one
+  // timer, tracked in pollTimer, cleared by stopPolling() like every other
+  // poll-driven render.
+  if (allNodes.some((n) => n.status === "pending") || (corpusSummary && corpusSummary.scanning)) {
     pollTimer = setTimeout(() => render(true), 1500);
   }
 }
