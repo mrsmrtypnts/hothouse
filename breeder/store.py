@@ -72,6 +72,15 @@ async def create_node(
     label: Optional[str] = None,
     batch_id: Optional[str] = None,
     render_mode: str = "txt2img",
+    # the breed-controls dial values (reroll_probability, keyword/lora/
+    # other_intensity) actually used to mutate this node's spec out of its
+    # parent's -- None for nodes that weren't the product of a mutation at
+    # all (a plain "+ New" root, or an imported image). Previously this data
+    # existed nowhere durable once the request that created the node
+    # returned; now it rides along with the node record itself, and gets
+    # mirrored into the saved image's own metadata too (see server.py's
+    # _tag_lineage) so it survives the image leaving the app entirely.
+    breed_params: Optional[dict] = None,
 ) -> dict:
     node = {
         "id": uuid.uuid4().hex,
@@ -80,6 +89,7 @@ async def create_node(
         "label": label,
         "batch_id": batch_id,
         "render_mode": render_mode,
+        "breed_params": breed_params,
         "task_id": None,
         "status": "pending",
         "image_file": None,

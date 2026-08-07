@@ -133,14 +133,40 @@ def _image_filename(node_id: str, spec: dict) -> str:
     return f"{stamp}-{spec.get('seed', 0)}-{node_id}.png"
 
 
-def _tag_lineage(image_bytes: bytes, parent_id: str, mutation: str) -> bytes:
+def _tag_lineage(
+    image_bytes: bytes,
+    parent_id: Optional[str],
+    mutation: Optional[str],
+    render_mode: str,
+    denoising_strength: Optional[float],
+    breed_params: Optional[dict],
+) -> bytes:
+    """Writes breeder's own provenance into the saved PNG's metadata,
+    alongside whatever "parameters" tEXt chunk the image already carries
+    from generation -- so the full story of how this specific file came to
+    exist (not just what settings made the pixels) survives the image
+    leaving the app: copied out, backed up, shared, or used to reconstruct
+    tree.json from scratch if it's ever lost. parent_id/mutation are kept as
+    their own flat tags (established already, other tooling may read them);
+    the rest is bundled into one JSON "breeder_params" tag rather than more
+    flat keys so it's namespaced and easy to extend later without colliding
+    with the standard "parameters" chunk's own format.
+    """
     im = Image.open(io.BytesIO(image_bytes))
     meta = PngImagePlugin.PngInfo()
     for k, v in im.info.items():
         if isinstance(v, str):
             meta.add_text(k, v)
-    meta.add_text("parent_id", parent_id)
-    meta.add_text("mutation", mutation)
+    if parent_id:
+        meta.add_text("parent_id", parent_id)
+    if mutation:
+        meta.add_text("mutation", mutation)
+    breeder_params = {"render_mode": render_mode}
+    if denoising_strength is not None:
+        breeder_params["denoising_strength"] = denoising_strength
+    if breed_params:
+        breeder_params.update(breed_params)
+    meta.add_text("breeder_params", json.dumps(breeder_params))
     buf = io.BytesIO()
     im.save(buf, format="PNG", pnginfo=meta)
     return buf.getvalue()
@@ -234,6 +260,7 @@ async def _render_node(
     label: Optional[str] = None,
     render_mode: str = "txt2img",
     init_image_bytes: Optional[bytes] = None,
+    breed_params: Optional[dict] = None,
 ) -> None:
     last_exc: Optional[Exception] = None
     for attempt in range(1, MAX_TRANSIENT_RETRIES + 2):
@@ -251,8 +278,9 @@ async def _render_node(
                 poll_timeout = client.POLL_TIMEOUT if attempt == 1 else RETRY_POLL_TIMEOUT_SECONDS
                 images = await client.poll_and_fetch(task_id, timeout=poll_timeout)
                 image_bytes, api_filename = images[0]
-                if parent_id and label:
-                    image_bytes = _tag_lineage(image_bytes, parent_id, label)
+                image_bytes = _tag_lineage(
+                    image_bytes, parent_id, label, render_mode, spec.get("denoising_strength"), breed_params
+                )
                 filename = api_filename or _image_filename(node_id, spec)
                 (config.IMAGE_DIR / filename).write_bytes(image_bytes)
             await store.mark_done(node_id, filename)
@@ -292,11 +320,19 @@ async def breed_roots(req: VariationsRequest):
     mutations = mutate.generate_children(
         base_spec, req.count, reroll_probability, keyword_intensity, lora_intensity, other_intensity
     )
+    breed_params = {
+        "reroll_probability": reroll_probability,
+        "keyword_intensity": keyword_intensity,
+        "lora_intensity": lora_intensity,
+        "other_intensity": other_intensity,
+    }
     batch_id = uuid.uuid4().hex
     new_nodes = []
     for spec, label in mutations:
-        node = await store.create_node(spec, parent_id=None, label=label, batch_id=batch_id, render_mode="txt2img")
-        asyncio.create_task(_render_node(node["id"], spec, None, label, "txt2img", None))
+        node = await store.create_node(
+            spec, parent_id=None, label=label, batch_id=batch_id, render_mode="txt2img", breed_params=breed_params
+        )
+        asyncio.create_task(_render_node(node["id"], spec, None, label, "txt2img", None, breed_params))
         new_nodes.append(node)
     return new_nodes
 
@@ -349,6 +385,12 @@ async def create_variations(node_id: str, req: VariationsRequest):
     mutations = mutate.generate_children(
         base_spec, req.count, reroll_probability, keyword_intensity, lora_intensity, other_intensity
     )
+    breed_params = {
+        "reroll_probability": reroll_probability,
+        "keyword_intensity": keyword_intensity,
+        "lora_intensity": lora_intensity,
+        "other_intensity": other_intensity,
+    }
     batch_id = uuid.uuid4().hex
     new_nodes = []
     for spec, label in mutations:
@@ -359,9 +401,9 @@ async def create_variations(node_id: str, req: VariationsRequest):
         else:
             spec.pop("denoising_strength", None)
         node = await store.create_node(
-            spec, parent_id=node_id, label=label, batch_id=batch_id, render_mode=req.mode
+            spec, parent_id=node_id, label=label, batch_id=batch_id, render_mode=req.mode, breed_params=breed_params
         )
-        asyncio.create_task(_render_node(node["id"], spec, node_id, label, req.mode, init_bytes))
+        asyncio.create_task(_render_node(node["id"], spec, node_id, label, req.mode, init_bytes, breed_params))
         new_nodes.append(node)
     return new_nodes
 
@@ -506,8 +548,10 @@ async def _resume_interrupted_node(node: dict) -> None:
             try:
                 images = await client.fetch_images(data)
                 image_bytes, api_filename = images[0]
-                if node["parent_id"] and node["label"]:
-                    image_bytes = _tag_lineage(image_bytes, node["parent_id"], node["label"])
+                image_bytes = _tag_lineage(
+                    image_bytes, node["parent_id"], node["label"], node.get("render_mode", "txt2img"),
+                    node["spec"].get("denoising_strength"), node.get("breed_params"),
+                )
                 filename = api_filename or _image_filename(node["id"], node["spec"])
                 (config.IMAGE_DIR / filename).write_bytes(image_bytes)
                 await store.mark_done(node["id"], filename)
@@ -518,7 +562,9 @@ async def _resume_interrupted_node(node: dict) -> None:
 
     render_mode = node.get("render_mode", "txt2img")
     init_bytes = _img2img_init_bytes(node)
-    await _render_node(node["id"], node["spec"], node["parent_id"], node["label"], render_mode, init_bytes)
+    await _render_node(
+        node["id"], node["spec"], node["parent_id"], node["label"], render_mode, init_bytes, node.get("breed_params")
+    )
 
 
 @app.on_event("startup")
