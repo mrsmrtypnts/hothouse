@@ -159,6 +159,17 @@ def _tag_lineage(
             meta.add_text(k, v)
     if parent_id:
         meta.add_text("parent_id", parent_id)
+        # parent_id alone is only useful while tree.json still exists to look
+        # it up in -- for images that get copied out to live independently
+        # (an external drive, no connection back to breeder at all), the only
+        # way to actually *find* the parent file again is by name. Diffus's
+        # own filenames (not breeder's node ids) are what end up on disk here
+        # (see the api_filename path in client.py), so that's what needs to
+        # travel in the metadata, looked up fresh at save time rather than
+        # assumed from the parent_id the caller already has.
+        parent = store.get(parent_id)
+        if parent and parent.get("image_file"):
+            meta.add_text("parent_filename", parent["image_file"])
     if mutation:
         meta.add_text("mutation", mutation)
     breeder_params = {"render_mode": render_mode}
