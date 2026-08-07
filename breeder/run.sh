@@ -3,8 +3,8 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 # Outside the repo, under the account's home dir and chmod 700 -- same reasoning
-# as breeder's data dir and access token: keep this isolated from other locally
-# logged-in accounts on the same Mac, regardless of where the repo itself lives.
+# as breeder's data dir: keep this isolated from other locally logged-in
+# accounts on the same Mac, regardless of where the repo itself lives.
 VENV_DIR="$HOME/.local/share/breeder/venv"
 HASH_FILE="$VENV_DIR/.requirements.sha256"
 

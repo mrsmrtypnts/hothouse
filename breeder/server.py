@@ -4,7 +4,6 @@ import io
 import json
 import os
 import re
-import secrets
 import threading
 import uuid
 import webbrowser
@@ -12,8 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import PlainTextResponse
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.staticfiles import StaticFiles
 from PIL import Image, PngImagePlugin
 from pydantic import BaseModel
@@ -27,46 +25,16 @@ import promptsyntax
 import reliability
 import store
 
-# Loopback sockets on macOS are shared across every locally logged-in account,
-# not just this one -- Fast User Switching or `su` lets another account reach
-# this port with nothing more than a guess. ACCESS_TOKEN closes that gap: pass
-# it once via ?token=, and a cookie carries it for the rest of the session.
-#
-# Persisted rather than regenerated per-process so a restart doesn't invalidate
-# every open tab/bookmark -- its job is blocking other local accounts, not
-# defending against a sophisticated attacker, so it doesn't need to rotate on
-# every restart. Delete the file to force a fresh token.
-_TOKEN_PATH = config.DATA_DIR / "access_token"
-
-
-def _load_or_create_token() -> str:
-    if _TOKEN_PATH.exists():
-        return _TOKEN_PATH.read_text().strip()
-    token = secrets.token_hex(24)
-    _TOKEN_PATH.write_text(token)
-    _TOKEN_PATH.chmod(0o600)
-    return token
-
-
-ACCESS_TOKEN = _load_or_create_token()
-TOKEN_COOKIE = "breeder_token"
-
 app = FastAPI()
-
-
-@app.middleware("http")
-async def _require_token(request: Request, call_next):
-    token = request.query_params.get("token") or request.cookies.get(TOKEN_COOKIE)
-    if token != ACCESS_TOKEN:
-        return PlainTextResponse("Forbidden", status_code=403)
-    response = await call_next(request)
-    response.set_cookie(TOKEN_COOKIE, ACCESS_TOKEN, httponly=True, samesite="lax")
-    return response
 
 
 @app.on_event("startup")
 async def _print_access_url() -> None:
-    url = f"http://127.0.0.1:{config.PORT}/?token={ACCESS_TOKEN}"
+    # no access token gate (removed deliberately -- was closing a real gap
+    # where loopback sockets are shared across every locally logged-in
+    # macOS account, but plain http://127.0.0.1:PORT/ is simpler and that
+    # tradeoff was a conscious choice, not an oversight)
+    url = f"http://127.0.0.1:{config.PORT}/"
     print(f"breeder: {url}")
     # set for throwaway/test instances so they don't spawn real browser tabs
     if not os.environ.get("BREEDER_NO_BROWSER_OPEN"):
