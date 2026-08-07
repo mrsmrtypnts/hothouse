@@ -239,32 +239,56 @@ function persistentMap(storageKeyPrefix) {
   };
 }
 
-// in-progress edits (diff-dismissed state) and every breed-controls setting
-// (mode, denoising strength, reroll probability, the three mutation-
-// intensity sliders, count) for any focus *other than the current one*,
-// keyed by focus id ("new" is a valid key too) -- so switching to a
-// different thumbnail and back doesn't forget what you were typing or had
-// dialed in. These used to be sessionStorage values shared across the whole
+// Persists one sticky field to the server, debounced so a slider drag
+// (which fires many `input` events per second) doesn't send a request per
+// tick -- fire-and-forget, no UI is waiting on this. Keyed by nodeId+field
+// (not field alone) so debouncing one field on one node can't cancel a
+// still-pending write for the *same* field on a *different* node you've
+// since navigated away from -- that pending write should still land.
+const stickyDebounceTimers = new Map();
+function postStickyDebounced(nodeId, field, value) {
+  if (!nodeId || nodeId === "new") return; // no server node to persist against yet
+  const key = `${nodeId}:${field}`;
+  clearTimeout(stickyDebounceTimers.get(key));
+  stickyDebounceTimers.set(key, setTimeout(() => {
+    stickyDebounceTimers.delete(key);
+    api.post(`/api/nodes/${nodeId}/sticky`, { [field]: value }).catch(() => {});
+  }, 400));
+}
+
+// in-progress edits (diff-dismissed state) for any focus *other than the
+// current one*, keyed by focus id ("new" is a valid key too) -- so
+// switching to a different thumbnail and back doesn't forget what you were
+// typing. These used to be sessionStorage values shared across the whole
 // tab, which meant e.g. breeding img2img from node A and then visiting node
 // B would leave B (and everywhere else) stuck in img2img too, or cranking
 // Lora mutations up for one experimental node would silently carry that
 // setting into every other node you looked at afterward -- these are all
 // properties of "what was I about to do to this specific node", not a
 // tab-wide setting.
-//
-// The breed-controls dials (mode/denoise/reroll/intensities/count) use
-// persistentMap rather than a plain Map: a plain in-memory Map is wiped by
-// any reload of this tab, including ones the user never asked for or
-// noticed -- Arc and Safari both silently reload backgrounded tabs under
-// memory pressure. That looked like "the mutation rate sliders randomly
-// reset to default sometimes, can't tell why" from the user's side, when
-// really it tracked whatever the browser's tab-eviction heuristics were
-// doing, not anything happening in Studio itself. formSpec/diff-dismissed
-// state stays a plain Map (in-progress edit content, not a dial setting --
-// fine to lose on a real reload, and much messier to serialize safely).
 const savedFormSpecs = new Map();
 const savedPromptDismissed = new Map();
 const savedNegPromptDismissed = new Map();
+
+// The breed-controls DIALS (mode/denoise/reroll/intensities/count), unlike
+// the in-progress edit state above, live server-side on the node itself
+// (tree.json's "sticky" field, see store.py) rather than client-side at
+// all -- these Maps now back *only* the "new" pseudo-focus (the "+ New"
+// screen, before any node exists to attach server state to). Two sessionStorage
+// generations were tried and both broke under real use:
+//   1. plain in-memory Maps -- wiped by any reload of the tab, including
+//      ones the user never asked for or noticed (Arc/Safari silently
+//      reload backgrounded tabs under memory pressure)
+//   2. sessionStorage-backed Maps (persistentMap) -- survives a same-origin
+//      reload, but a server restart landing on a different port (run.sh's
+//      own fallback-to-next-port behavior) is a *different origin* as far
+//      as the browser's concerned, so sessionStorage from the old port is
+//      simply unreachable, full stop. Confirmed by a user report: dials
+//      still reset "on a server bounce and/or page reload" even after fix
+//      #2 shipped.
+// Real nodes don't have this problem since there's no browser storage
+// involved at all now -- see postStickyDebounced and switchFormFocus's
+// serverSticky parameter.
 const savedMode = persistentMap("breederV2SavedMode");
 const savedDenoise = persistentMap("breederV2SavedDenoise");
 const savedRerollPct = persistentMap("breederV2SavedRerollPct");
@@ -290,60 +314,61 @@ let currentCount = 4;
 // actually changed (i.e. the form needs rebuilding from some seed spec).
 //
 // `defaultMode`/`defaultDenoise` are this node's own render_mode/
-// denoising_strength -- the very first time a node is focused (nothing in
-// savedMode/savedDenoise yet), its breed controls should start from how it
-// was itself generated, not a hardcoded txt2img/0.75: a node born via
-// img2img should start life expecting to breed the same way, and a node
-// bred at denoising_strength 0.4 should offer 0.4 as the starting point,
-// not always reset to 0.75. Reroll/intensities/count have no equivalent
-// "how was I generated" signal to inherit, so their first-visit default is
-// just the same static default as before. Once you've actually touched a
-// control for a given node in this tab, that sticks (the saved* Maps above)
-// and wins over these defaults on every future visit.
-function switchFormFocus(newFocusId, defaultMode = "txt2img", defaultDenoise = 0.75) {
+// denoising_strength, used only as a last-resort fallback (see below).
+// `serverSticky` is the node's own `sticky` field, already fetched by the
+// caller as part of the node GET -- the real source of truth for a real
+// node's dials now (see the persistentMap comment above for why this isn't
+// client-side storage anymore). null/undefined for the "new" pseudo-focus,
+// which has no server node to have fetched it from.
+function switchFormFocus(newFocusId, defaultMode = "txt2img", defaultDenoise = 0.75, serverSticky = null) {
   const changed = formFocusId !== newFocusId;
   if (changed) {
     if (formFocusId != null) {
       savedFormSpecs.set(formFocusId, formSpec);
       savedPromptDismissed.set(formFocusId, promptDiffDismissed);
       savedNegPromptDismissed.set(formFocusId, negPromptDiffDismissed);
-      savedMode.set(formFocusId, currentMode);
-      savedDenoise.set(formFocusId, currentDenoise);
-      savedRerollPct.set(formFocusId, currentRerollPct);
-      savedKeywordIntensity.set(formFocusId, currentKeywordIntensity);
-      savedLoraIntensity.set(formFocusId, currentLoraIntensity);
-      savedOtherIntensity.set(formFocusId, currentOtherIntensity);
-      savedCount.set(formFocusId, currentCount);
+      if (formFocusId === "new") {
+        // only "new" still needs its dials stashed here on the way out --
+        // a real node's dials are already durable server-side via
+        // postStickyDebounced, fired as each one changed
+        savedMode.set(formFocusId, currentMode);
+        savedDenoise.set(formFocusId, currentDenoise);
+        savedRerollPct.set(formFocusId, currentRerollPct);
+        savedKeywordIntensity.set(formFocusId, currentKeywordIntensity);
+        savedLoraIntensity.set(formFocusId, currentLoraIntensity);
+        savedOtherIntensity.set(formFocusId, currentOtherIntensity);
+        savedCount.set(formFocusId, currentCount);
+      }
     }
     formFocusId = newFocusId;
     promptDiffDismissed = savedPromptDismissed.get(newFocusId) || false;
     negPromptDiffDismissed = savedNegPromptDismissed.get(newFocusId) || false;
-    currentMode = savedMode.has(newFocusId) ? savedMode.get(newFocusId) : defaultMode;
-    currentDenoise = savedDenoise.has(newFocusId) ? savedDenoise.get(newFocusId) : defaultDenoise;
-    currentRerollPct = savedRerollPct.has(newFocusId) ? savedRerollPct.get(newFocusId) : 50;
-    currentKeywordIntensity = savedKeywordIntensity.has(newFocusId) ? savedKeywordIntensity.get(newFocusId) : 2.5;
-    currentLoraIntensity = savedLoraIntensity.has(newFocusId) ? savedLoraIntensity.get(newFocusId) : 2.5;
-    currentOtherIntensity = savedOtherIntensity.has(newFocusId) ? savedOtherIntensity.get(newFocusId) : 0.5;
-    currentCount = savedCount.has(newFocusId) ? savedCount.get(newFocusId) : 4;
+    if (newFocusId === "new") {
+      currentMode = savedMode.has(newFocusId) ? savedMode.get(newFocusId) : defaultMode;
+      currentDenoise = savedDenoise.has(newFocusId) ? savedDenoise.get(newFocusId) : defaultDenoise;
+      currentRerollPct = savedRerollPct.has(newFocusId) ? savedRerollPct.get(newFocusId) : 50;
+      currentKeywordIntensity = savedKeywordIntensity.has(newFocusId) ? savedKeywordIntensity.get(newFocusId) : 2.5;
+      currentLoraIntensity = savedLoraIntensity.has(newFocusId) ? savedLoraIntensity.get(newFocusId) : 2.5;
+      currentOtherIntensity = savedOtherIntensity.has(newFocusId) ? savedOtherIntensity.get(newFocusId) : 0.5;
+      currentCount = savedCount.has(newFocusId) ? savedCount.get(newFocusId) : 4;
+    } else {
+      // real node: server's sticky field wins outright when present (it's
+      // seeded at creation time -- see server.py's breed_roots/
+      // create_variations -- so "present" and "user already touched it in
+      // this tab" aren't actually distinguishable, nor need to be); fall
+      // back to this node's own render_mode/denoising_strength (how *it*
+      // was generated) only for legacy nodes with no sticky field at all
+      const s = serverSticky || {};
+      currentMode = s.render_mode ?? defaultMode;
+      currentDenoise = s.denoising_strength ?? defaultDenoise;
+      currentRerollPct = s.reroll_probability != null ? Math.round(s.reroll_probability * 100) : 50;
+      currentKeywordIntensity = s.keyword_intensity ?? 2.5;
+      currentLoraIntensity = s.lora_intensity ?? 2.5;
+      currentOtherIntensity = s.other_intensity ?? 0.5;
+      currentCount = s.count ?? 4;
+    }
   }
   return changed;
-}
-
-// Call right after creating one or more new nodes (breeding, whether from
-// an existing node or the "+ New" screen) with the CURRENT (parent's, or
-// the fresh-screen's) breed-controls values still in currentRerollPct etc.
-// Pre-seeds each new child's saved* entry so switchFormFocus finds it on
-// first visit instead of falling back to the static default -- children
-// start life with the same dials their parent had, same idea as
-// wireImageOnlyDrop pre-seeding savedMode for an imported img2img root.
-function inheritBreedControlsForChildren(newNodes) {
-  for (const n of newNodes) {
-    savedRerollPct.set(n.id, currentRerollPct);
-    savedKeywordIntensity.set(n.id, currentKeywordIntensity);
-    savedLoraIntensity.set(n.id, currentLoraIntensity);
-    savedOtherIntensity.set(n.id, currentOtherIntensity);
-    savedCount.set(n.id, currentCount);
-  }
 }
 
 let hoverEl = null;
@@ -1073,19 +1098,22 @@ function buildForm(spec, knownModels, parentSpec) {
   return form;
 }
 
-// Setters below write through to the current focus's persistentMap entry
-// immediately, not just when switchFormFocus later stashes it on switching
-// away -- otherwise a slider you'd just dragged, on a node you hadn't
-// navigated away from yet, was still only sitting in the plain `current*`
-// variable and just as vulnerable to a surprise tab reload as before this
-// fix. formFocusId can legitimately be null very briefly (before the first
-// switchFormFocus call of the session), hence the guard.
+// Setters below write through immediately, not just when switchFormFocus
+// later stashes state on switching away -- otherwise a slider you'd just
+// dragged, on a node you hadn't navigated away from yet, was still only
+// sitting in the plain `current*` variable. For "new" that's the
+// persistentMap entry (sessionStorage); for a real node it's a debounced
+// POST to that node's own server-side sticky field (see
+// postStickyDebounced). formFocusId can legitimately be null very briefly
+// (before the first switchFormFocus call of the session), hence the guard.
 function getRerollPct() {
   return currentRerollPct;
 }
 function setRerollPct(pct) {
   currentRerollPct = pct;
-  if (formFocusId != null) savedRerollPct.set(formFocusId, pct);
+  if (formFocusId === "new") savedRerollPct.set(formFocusId, pct);
+  // server stores this as a 0..1 fraction, same units the breed request itself uses
+  else if (formFocusId != null) postStickyDebounced(formFocusId, "reroll_probability", pct / 100);
 }
 // Three independent "expected mutation count" sliders, mirroring
 // mutate.py's KEYWORD_MUTATORS/LORA_MUTATORS/OTHER_MUTATORS families --
@@ -1095,28 +1123,32 @@ function getKeywordIntensity() {
 }
 function setKeywordIntensity(v) {
   currentKeywordIntensity = v;
-  if (formFocusId != null) savedKeywordIntensity.set(formFocusId, v);
+  if (formFocusId === "new") savedKeywordIntensity.set(formFocusId, v);
+  else if (formFocusId != null) postStickyDebounced(formFocusId, "keyword_intensity", v);
 }
 function getLoraIntensity() {
   return currentLoraIntensity;
 }
 function setLoraIntensity(v) {
   currentLoraIntensity = v;
-  if (formFocusId != null) savedLoraIntensity.set(formFocusId, v);
+  if (formFocusId === "new") savedLoraIntensity.set(formFocusId, v);
+  else if (formFocusId != null) postStickyDebounced(formFocusId, "lora_intensity", v);
 }
 function getOtherIntensity() {
   return currentOtherIntensity;
 }
 function setOtherIntensity(v) {
   currentOtherIntensity = v;
-  if (formFocusId != null) savedOtherIntensity.set(formFocusId, v);
+  if (formFocusId === "new") savedOtherIntensity.set(formFocusId, v);
+  else if (formFocusId != null) postStickyDebounced(formFocusId, "other_intensity", v);
 }
 function getCount() {
   return currentCount;
 }
 function setCount(v) {
   currentCount = v;
-  if (formFocusId != null) savedCount.set(formFocusId, v);
+  if (formFocusId === "new") savedCount.set(formFocusId, v);
+  else if (formFocusId != null) postStickyDebounced(formFocusId, "count", v);
 }
 
 function buildRerollField() {
@@ -1173,7 +1205,8 @@ function buildDenoiseField() {
     readout.textContent = v.toFixed(2);
     currentDenoise = v;
     // write through immediately, same reasoning as setRerollPct etc. above
-    if (formFocusId != null) savedDenoise.set(formFocusId, v);
+    if (formFocusId === "new") savedDenoise.set(formFocusId, v);
+    else if (formFocusId != null) postStickyDebounced(formFocusId, "denoising_strength", v);
   });
   row.appendChild(slider);
   row.appendChild(readout);
@@ -1217,11 +1250,13 @@ function buildBreedControls(node) {
   // write through immediately, same reasoning as setRerollPct etc. above
   txt2imgBtn.addEventListener("click", () => {
     mode = "txt2img"; currentMode = mode; updateModeUI();
-    if (formFocusId != null) savedMode.set(formFocusId, mode);
+    if (formFocusId === "new") savedMode.set(formFocusId, mode);
+    else if (formFocusId != null) postStickyDebounced(formFocusId, "render_mode", mode);
   });
   img2imgBtn.addEventListener("click", () => {
     mode = "img2img"; currentMode = mode; updateModeUI();
-    if (formFocusId != null) savedMode.set(formFocusId, mode);
+    if (formFocusId === "new") savedMode.set(formFocusId, mode);
+    else if (formFocusId != null) postStickyDebounced(formFocusId, "render_mode", mode);
   });
   updateModeUI();
   modeToggle.appendChild(txt2imgBtn);
@@ -1248,7 +1283,10 @@ function buildBreedControls(node) {
       body.denoising_strength = parseFloat(denoise.slider.value) || 0.75;
     }
     const newNodes = await api.post(`/api/nodes/${node.id}/variations`, body);
-    inheritBreedControlsForChildren(newNodes);
+    // no client-side inheritance step needed here -- the server already
+    // seeds each new child's own sticky field from these same values (see
+    // create_variations), which switchFormFocus reads directly once you
+    // navigate to one of them
     breedBtn.disabled = false;
     breedBtn.textContent = "Breed";
     render();
@@ -1297,7 +1335,8 @@ function buildFreshBreedControls() {
       spec: formSpec,
     };
     const nodes = await api.post("/api/root/breed", body);
-    inheritBreedControlsForChildren(nodes);
+    // see the identical comment in buildBreedControls' breedBtn handler --
+    // server.py's breed_roots already seeds each new root's sticky field
     navigate(nodes[0].id);
   });
 
@@ -1372,10 +1411,12 @@ function wireImageOnlyDrop(target) {
   wireImageDrop(target, async (file) => {
     try {
       const node = await uploadRootImage(file, formSpec);
-      // pre-seed this specific new node's saved mode (rather than setting
-      // currentMode directly) so switchFormFocus picks it up correctly once
-      // navigate()'s render actually focuses it
-      savedMode.set(node.id, "img2img");
+      // pre-seed this specific new node's sticky mode server-side (rather
+      // than setting currentMode directly) so switchFormFocus picks it up
+      // correctly once navigate()'s render actually focuses it -- awaited
+      // rather than fire-and-forget so it's guaranteed to land before that
+      // GET, not racing it
+      await api.post(`/api/nodes/${node.id}/sticky`, { render_mode: "img2img" });
       navigate(node.id);
     } catch (err) {
       alert(`Import failed: ${err.message}`);
@@ -1771,7 +1812,7 @@ async function buildDetailPanel(focusId, knownModels) {
   main.appendChild(imageBox);
 
   const rebuildForm = switchFormFocus(
-    focusId, node.render_mode || "txt2img", node.spec.denoising_strength ?? 0.75
+    focusId, node.render_mode || "txt2img", node.spec.denoising_strength ?? 0.75, node.sticky
   );
   const parentNode = ancestors.length >= 2 ? ancestors[ancestors.length - 2] : null;
   const seedSpec = rebuildForm ? (savedFormSpecs.get(focusId) ?? node.spec) : formSpec;

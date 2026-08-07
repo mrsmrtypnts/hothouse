@@ -122,6 +122,21 @@ class VariationsRequest(BaseModel):
     spec: Optional[dict] = None
 
 
+class StickyRequest(BaseModel):
+    # all optional, and only the fields actually present get merged in (see
+    # store.set_sticky) -- Studio sends just the one field the user actually
+    # touched, not a full snapshot of every control, so a burst of quick
+    # independent edits (e.g. dragging two different sliders back to back)
+    # can't race and clobber each other's value with a stale read.
+    render_mode: Optional[str] = None
+    denoising_strength: Optional[float] = None
+    reroll_probability: Optional[float] = None
+    keyword_intensity: Optional[float] = None
+    lora_intensity: Optional[float] = None
+    other_intensity: Optional[float] = None
+    count: Optional[int] = None
+
+
 class CorpusScanRequest(BaseModel):
     # omitted/empty -- rescan whatever was last scanned (see corpus.current_paths),
     # so Studio's "rescan now" button doesn't need to resend the configured paths
@@ -337,11 +352,18 @@ async def breed_roots(req: VariationsRequest):
         "lora_intensity": lora_intensity,
         "other_intensity": other_intensity,
     }
+    # what Studio should show if you go on to breed *from* one of these new
+    # nodes -- starts identical to breed_params/render_mode (a child inherits
+    # its parent's dials), but is its own field so adjusting it later doesn't
+    # rewrite breed_params' historical record of how this node itself came
+    # to exist. See store.create_node's sticky param for the full story.
+    sticky = {**breed_params, "render_mode": "txt2img", "count": req.count}
     batch_id = uuid.uuid4().hex
     new_nodes = []
     for spec, label in mutations:
         node = await store.create_node(
-            spec, parent_id=None, label=label, batch_id=batch_id, render_mode="txt2img", breed_params=breed_params
+            spec, parent_id=None, label=label, batch_id=batch_id, render_mode="txt2img",
+            breed_params=breed_params, sticky=sticky,
         )
         asyncio.create_task(_render_node(node["id"], spec, None, label, "txt2img", None, breed_params))
         new_nodes.append(node)
@@ -402,17 +424,25 @@ async def create_variations(node_id: str, req: VariationsRequest):
         "lora_intensity": lora_intensity,
         "other_intensity": other_intensity,
     }
+    resolved_denoise = (
+        req.denoising_strength if req.denoising_strength is not None else DEFAULT_DENOISING_STRENGTH
+    )
+    # see breed_roots' identical comment -- what Studio should show when
+    # breeding *from* one of these new nodes, seeded from the same dials
+    # used to make them
+    sticky = {**breed_params, "render_mode": req.mode, "count": req.count}
+    if req.mode == "img2img":
+        sticky["denoising_strength"] = resolved_denoise
     batch_id = uuid.uuid4().hex
     new_nodes = []
     for spec, label in mutations:
         if req.mode == "img2img":
-            spec["denoising_strength"] = (
-                req.denoising_strength if req.denoising_strength is not None else DEFAULT_DENOISING_STRENGTH
-            )
+            spec["denoising_strength"] = resolved_denoise
         else:
             spec.pop("denoising_strength", None)
         node = await store.create_node(
-            spec, parent_id=node_id, label=label, batch_id=batch_id, render_mode=req.mode, breed_params=breed_params
+            spec, parent_id=node_id, label=label, batch_id=batch_id, render_mode=req.mode,
+            breed_params=breed_params, sticky=sticky,
         )
         asyncio.create_task(_render_node(node["id"], spec, node_id, label, req.mode, init_bytes, breed_params))
         new_nodes.append(node)
@@ -432,6 +462,15 @@ async def mark_node_viewed(node_id: str):
     if store.get(node_id) is None:
         raise HTTPException(404, "node not found")
     await store.mark_viewed(node_id)
+    return store.get(node_id)
+
+
+@app.post("/api/nodes/{node_id}/sticky")
+async def update_sticky(node_id: str, req: StickyRequest):
+    if store.get(node_id) is None:
+        raise HTTPException(404, "node not found")
+    fields = {k: v for k, v in req.model_dump().items() if v is not None}
+    await store.set_sticky(node_id, **fields)
     return store.get(node_id)
 
 

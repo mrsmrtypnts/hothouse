@@ -81,6 +81,26 @@ async def create_node(
     # mirrored into the saved image's own metadata too (see server.py's
     # _tag_lineage) so it survives the image leaving the app entirely.
     breed_params: Optional[dict] = None,
+    # the breed-controls dial values Studio should show *when you're about to
+    # breed from this node* -- seeded at creation time (normally identical to
+    # breed_params/render_mode/spec.denoising_strength, since a child starts
+    # out inheriting its parent's dials), but drifts independently after that
+    # as you adjust the controls while looking at this specific node (see
+    # set_sticky). Deliberately a separate field from breed_params, which
+    # stays an immutable historical record of how *this* node was actually
+    # made (also mirrored into the saved image's metadata at creation time,
+    # before sticky could have changed) -- conflating the two would mean
+    # tweaking a slider after the fact quietly rewrites that history.
+    #
+    # This used to live only in the browser (sessionStorage, keyed per node
+    # id), which looked like it fixed "resets to default sometimes" until a
+    # user report showed it *still* reset on "a server bounce and/or page
+    # reload" -- sessionStorage is scoped per browser origin, and a server
+    # restart landing on a different port (run.sh's own fallback-to-next-
+    # port behavior) is a different origin as far as the browser's
+    # concerned, full stop. Exact same failure mode "viewed" status hit
+    # before it was moved server-side; same fix here.
+    sticky: Optional[dict] = None,
 ) -> dict:
     node = {
         "id": uuid.uuid4().hex,
@@ -90,6 +110,7 @@ async def create_node(
         "batch_id": batch_id,
         "render_mode": render_mode,
         "breed_params": breed_params,
+        "sticky": sticky,
         "task_id": None,
         "status": "pending",
         "image_file": None,
@@ -101,6 +122,20 @@ async def create_node(
         _nodes[node["id"]] = node
         _save()
     return node
+
+
+async def set_sticky(node_id: str, **fields) -> None:
+    """Merges partial breed-controls dial updates into a node's sticky dict
+    -- called every time the user changes one of the controls while this
+    node is focused. Merges rather than replaces so a burst of independent
+    field updates (each slider fires its own call) never clobbers a
+    sibling field's most recent value with a stale one."""
+    async with _lock:
+        if node_id not in _nodes:
+            return
+        current = _nodes[node_id].get("sticky") or {}
+        _nodes[node_id]["sticky"] = {**current, **fields}
+        _save()
 
 
 async def set_task_id(node_id: str, task_id: str) -> None:
