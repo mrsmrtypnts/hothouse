@@ -9,8 +9,8 @@
   --text: #eaeaef;
   --text-dim: #9d9da9;
   --text-faint: #6f6f7b;
-  --accent: #5468e0;
-  --accent-hover: #6478ee;
+  --accent: #ee1cac;
+  --accent-hover: #f24ebe;
   --radius: 8px;
   --radius-sm: 5px;
 }
@@ -464,16 +464,16 @@ button:disabled { opacity: 0.5; cursor: default; }
 .mode-toggle button.active { background: var(--bg-hover); color: var(--text); font-weight: 600; }
 
 .btn-breed {
-  background: linear-gradient(135deg, #7d6bf2, #5539e8);
+  background: linear-gradient(135deg, #f24ebe, #ca1892);
   border-color: transparent;
   color: #fff;
   font-weight: 700;
   font-size: 15px;
   padding: 11px 32px;
-  box-shadow: 0 2px 14px rgba(85, 57, 232, 0.45);
+  box-shadow: 0 2px 14px rgba(202, 24, 146, 0.45);
   margin-left: auto;
 }
-.btn-breed:hover { background: linear-gradient(135deg, #8c7bf5, #6548ee); }
+.btn-breed:hover { background: linear-gradient(135deg, #f469c8, #d23ba2); }
 
 .empty-state {
   color: var(--text-dim);
