@@ -262,6 +262,23 @@ function switchFormFocus(newFocusId, defaultMode = "txt2img", defaultDenoise = 0
   return changed;
 }
 
+// Call right after creating one or more new nodes (breeding, whether from
+// an existing node or the "+ New" screen) with the CURRENT (parent's, or
+// the fresh-screen's) breed-controls values still in currentRerollPct etc.
+// Pre-seeds each new child's saved* entry so switchFormFocus finds it on
+// first visit instead of falling back to the static default -- children
+// start life with the same dials their parent had, same idea as
+// wireImageOnlyDrop pre-seeding savedMode for an imported img2img root.
+function inheritBreedControlsForChildren(newNodes) {
+  for (const n of newNodes) {
+    savedRerollPct.set(n.id, currentRerollPct);
+    savedKeywordIntensity.set(n.id, currentKeywordIntensity);
+    savedLoraIntensity.set(n.id, currentLoraIntensity);
+    savedOtherIntensity.set(n.id, currentOtherIntensity);
+    savedCount.set(n.id, currentCount);
+  }
+}
+
 let hoverEl = null;
 
 function hideHoverPreview() {
@@ -1116,7 +1133,8 @@ function buildBreedControls(node) {
     if (mode === "img2img") {
       body.denoising_strength = parseFloat(denoise.slider.value) || 0.75;
     }
-    await api.post(`/api/nodes/${node.id}/variations`, body);
+    const newNodes = await api.post(`/api/nodes/${node.id}/variations`, body);
+    inheritBreedControlsForChildren(newNodes);
     breedBtn.disabled = false;
     breedBtn.textContent = "Breed";
     render();
@@ -1165,6 +1183,7 @@ function buildFreshBreedControls() {
       spec: formSpec,
     };
     const nodes = await api.post("/api/root/breed", body);
+    inheritBreedControlsForChildren(nodes);
     navigate(nodes[0].id);
   });
 
