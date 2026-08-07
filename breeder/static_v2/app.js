@@ -33,6 +33,19 @@ function el(tag, attrs = {}, children = []) {
   return node;
 }
 
+// same shape as favicon.svg (kept identical -- both mounted UIs share the
+// same mark), inlined here rather than <img src="favicon.svg"> so the fill
+// can track the --accent custom property and stay in sync automatically if
+// the accent color is ever changed again
+const LOGO_SVG_MARKUP = `<svg viewBox="0 0 32 32" class="studio-logo" aria-hidden="true">
+  <g fill="var(--accent)" transform="rotate(45 16 16)">
+    <path d="M0,0 C-7,9 -7,9 -7,13.5 C-7,17.7 -3.9,20 0,20 C3.9,20 7,17.7 7,13.5 C7,9 7,9 0,0 Z" transform="translate(16,16) rotate(0) scale(0.55)"/>
+    <path d="M0,0 C-7,9 -7,9 -7,13.5 C-7,17.7 -3.9,20 0,20 C3.9,20 7,17.7 7,13.5 C7,9 7,9 0,0 Z" transform="translate(16,16) rotate(90) scale(0.55)"/>
+    <path d="M0,0 C-7,9 -7,9 -7,13.5 C-7,17.7 -3.9,20 0,20 C3.9,20 7,17.7 7,13.5 C7,9 7,9 0,0 Z" transform="translate(16,16) rotate(180) scale(0.55)"/>
+    <path d="M0,0 C-7,9 -7,9 -7,13.5 C-7,17.7 -3.9,20 0,20 C3.9,20 7,17.7 7,13.5 C7,9 7,9 0,0 Z" transform="translate(16,16) rotate(270) scale(0.55)"/>
+  </g>
+</svg>`;
+
 function currentNodeId() {
   return new URLSearchParams(location.search).get("n");
 }
@@ -175,6 +188,20 @@ let formFocusId = null;
 // refreshed every render() alongside allNodes/knownModels -- read by the
 // corpus panel and by the lora-mutations warning in the breed controls
 let corpusSummary = null;
+
+// set right when the user clicks "rescan now", cleared once a render()
+// actually observes corpusSummary.scanning -- covers the gap between firing
+// the scan request and the backend flag flipping true, which otherwise the
+// poll-scheduling check below would miss entirely (it only fires again when
+// *already* scheduled) and the progress bar would never appear for a
+// manually-triggered scan, only for one that happened to already be running
+// when the page loaded
+let expectScanSoon = false;
+// safety valve: if a scan is tiny enough (or the request fails) to finish
+// before any poll ever catches scanning=true, expectScanSoon would otherwise
+// never get cleared and we'd poll forever -- give up waiting after this long
+let expectScanSoonSince = 0;
+const EXPECT_SCAN_TIMEOUT_MS = 10000;
 
 // whether the prompt/negative-prompt diff-vs-parent overlay has been
 // dismissed (by editing) for the current focus -- reset alongside formSpec
@@ -559,15 +586,38 @@ function buildCorpusPanel() {
     // independent timer (see the render() gotcha note there for why that
     // was a real bug: an untracked, self-multiplying setTimeout chain that
     // could pile up into a page-freezing request storm).
-    wrap.appendChild(el("div", { class: "corpus-scanning", text: "scanning..." }));
+    const progress = s.scan_progress;
+    if (progress && progress.total > 0) {
+      const pct = Math.round((progress.done / progress.total) * 100);
+      wrap.appendChild(el("div", {
+        class: "corpus-scanning",
+        text: `scanning... ${progress.done.toLocaleString()} / ${progress.total.toLocaleString()} (${pct}%)`,
+      }));
+      const track = el("div", { class: "corpus-progress-track" });
+      const fill = el("div", { class: "corpus-progress-fill" });
+      fill.style.width = `${pct}%`;
+      track.appendChild(fill);
+      wrap.appendChild(track);
+    } else {
+      // scan just started -- still walking directories to build the file
+      // list (see corpus.scan), so there's no total to show a bar against yet
+      wrap.appendChild(el("div", { class: "corpus-scanning", text: "scanning... finding files" }));
+    }
   }
 
   const rescanBtn = el("button", { type: "button", class: "corpus-rescan-btn", text: "rescan now" });
   rescanBtn.disabled = !!(s && s.scanning);
-  rescanBtn.addEventListener("click", async () => {
+  rescanBtn.addEventListener("click", () => {
     rescanBtn.disabled = true;
     rescanBtn.textContent = "scanning...";
-    await api.post("/api/corpus/scan", {});
+    expectScanSoon = true;
+    expectScanSoonSince = Date.now();
+    // fire-and-forget: the endpoint doesn't resolve until the scan is fully
+    // done, so awaiting it here would block this render() from firing again
+    // until completion -- exactly the "no live progress" bug this is fixing.
+    // The poll loop (see render()'s scheduling check) picks up progress from
+    // here instead.
+    api.post("/api/corpus/scan", {});
     render();
   });
   wrap.appendChild(rescanBtn);
@@ -585,7 +635,10 @@ function nodeMatchesKeyword(node, keyword) {
 function buildBrowserPanel(allNodes, focusId) {
   const panel = el("div", { class: "browser-panel" });
   const headerRow = el("div", { class: "browser-header" });
-  headerRow.appendChild(el("h2", { text: "Breeder Studio" }));
+  const titleGroup = el("div", { class: "browser-title" });
+  titleGroup.innerHTML = LOGO_SVG_MARKUP;
+  titleGroup.appendChild(el("h2", { text: "Breeder Studio" }));
+  headerRow.appendChild(titleGroup);
   const corpusToggle = el("button", { type: "button", class: "corpus-toggle-btn", text: "corpus" });
   headerRow.appendChild(corpusToggle);
   panel.appendChild(headerRow);
@@ -1793,7 +1846,18 @@ async function render(isPoll = false) {
   // request storm looks like. Folding it in here means there's exactly one
   // timer, tracked in pollTimer, cleared by stopPolling() like every other
   // poll-driven render.
-  if (allNodes.some((n) => n.status === "pending") || (corpusSummary && corpusSummary.scanning)) {
+  if (expectScanSoon && (corpusSummary?.scanning || Date.now() - expectScanSoonSince > EXPECT_SCAN_TIMEOUT_MS)) {
+    // either the scan we were waiting for actually started showing up in
+    // polled state, or it's been long enough that it must have already
+    // finished (or failed) without us ever catching it in-flight -- either
+    // way, stop treating this as "might start any moment"
+    expectScanSoon = false;
+  }
+  if (
+    allNodes.some((n) => n.status === "pending") ||
+    (corpusSummary && corpusSummary.scanning) ||
+    expectScanSoon
+  ) {
     pollTimer = setTimeout(() => render(true), 1500);
   }
 }

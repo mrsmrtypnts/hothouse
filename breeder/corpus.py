@@ -87,6 +87,10 @@ def current_paths() -> list[str]:
 
 
 _scanning = False
+# {"done": N, "total": M} while a scan is running, None otherwise -- exposed
+# via summary() so Studio's "scanning..." indicator can show real progress
+# instead of a static message with no sense of how long it'll take
+_scan_progress: Optional[dict] = None
 
 
 def is_scanning() -> bool:
@@ -94,27 +98,36 @@ def is_scanning() -> bool:
 
 
 def scan(paths: list[str]) -> dict:
-    global _scanning
+    global _scanning, _scan_progress
     _scanning = True
     try:
         keywords = {"prompt": {}, "negative_prompt": {}}
         loras = {}
         models = {}
         file_count = 0
-        for root in _expand_dirs(paths):
-            for f in root.rglob("*.png"):
-                try:
-                    im = Image.open(f)
-                    text = im.info.get("parameters")
-                    if not text:
-                        continue
-                    spec = extract.parse_parameters_text(text)
-                except Exception:
+
+        # materialized up front rather than processed as the rglob generators
+        # yield -- listing filenames is cheap (just directory traversal) next
+        # to actually opening each one for its metadata, and doing it this
+        # way gives an immediate, accurate total to report progress against
+        # instead of an open-ended "N so far, who knows how many left"
+        files = [f for root in _expand_dirs(paths) for f in root.rglob("*.png")]
+        _scan_progress = {"done": 0, "total": len(files)}
+
+        for i, f in enumerate(files, 1):
+            _scan_progress["done"] = i
+            try:
+                im = Image.open(f)
+                text = im.info.get("parameters")
+                if not text:
                     continue
-                file_count += 1
-                _tally_field(spec.get("prompt", ""), keywords["prompt"], loras)
-                _tally_field(spec.get("negative_prompt", ""), keywords["negative_prompt"], None)
-                _tally_model(spec.get("model_name", ""), spec.get("model_hash", ""), models)
+                spec = extract.parse_parameters_text(text)
+            except Exception:
+                continue
+            file_count += 1
+            _tally_field(spec.get("prompt", ""), keywords["prompt"], loras)
+            _tally_field(spec.get("negative_prompt", ""), keywords["negative_prompt"], None)
+            _tally_model(spec.get("model_name", ""), spec.get("model_hash", ""), models)
 
         global _state
         if file_count == 0 and _state.get("file_count", 0) > 0:
@@ -135,6 +148,7 @@ def scan(paths: list[str]) -> dict:
         return summary()
     finally:
         _scanning = False
+        _scan_progress = None
 
 
 def top_keywords(field: str, exclude: set[str]) -> list[tuple[str, int, float]]:
@@ -177,6 +191,7 @@ def summary(limit: int = 25) -> dict:
         "scanned_at": _state["scanned_at"],
         "file_count": _state["file_count"],
         "scanning": _scanning,
+        "scan_progress": _scan_progress,
         "top_prompt_keywords": top_n(_state["keywords"]["prompt"]),
         "top_negative_keywords": top_n(_state["keywords"]["negative_prompt"]),
         "top_loras": top_n(_state["loras"]),

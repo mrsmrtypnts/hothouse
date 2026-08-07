@@ -71,6 +71,8 @@ button:disabled { opacity: 0.5; cursor: default; }
 
 .browser-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 16px; }
 .browser-header h2 { margin: 0; }
+.browser-title { display: flex; align-items: center; gap: 8px; }
+.studio-logo { width: 22px; height: 22px; flex-shrink: 0; }
 .corpus-toggle-btn { font-size: 12px; padding: 4px 10px; }
 
 .corpus-panel {
@@ -87,6 +89,18 @@ button:disabled { opacity: 0.5; cursor: default; }
 .corpus-status { font-size: 13px; color: var(--text-dim); }
 .corpus-paths { font-size: 12px; color: var(--text-faint); word-break: break-all; }
 .corpus-scanning { font-size: 12px; color: var(--accent-hover); }
+.corpus-progress-track {
+  width: 100%;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border-light);
+  overflow: hidden;
+}
+.corpus-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.3s ease;
+}
 .corpus-rescan-btn { font-size: 12px; padding: 4px 10px; }
 
 .corpus-warning {
