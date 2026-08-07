@@ -37,7 +37,16 @@ function el(tag, attrs = {}, children = []) {
 // same mark), inlined here rather than <img src="favicon.svg"> so the fill
 // can track the --accent custom property and stay in sync automatically if
 // the accent color is ever changed again
-const LOGO_SVG_MARKUP = `<svg viewBox="0 0 32 32" class="studio-logo" aria-hidden="true">
+//
+// viewBox is cropped tight to the drawn ink (5.5..26.5 on both axes, measured
+// via getBBox) rather than the full 0 0 32 32 favicon.svg uses -- the
+// favicon's square canvas has ~7.5 units of transparent padding baked in on
+// every side (needed there so the shape doesn't touch the tab-icon edges),
+// but that same padding made the CSS gap here unpredictable: the *visible*
+// space between the icon and the title text was gap + that padding, not
+// just gap. Cropping it out means .browser-title's gap value is the actual
+// visual gap, not an approximation of it.
+const LOGO_SVG_MARKUP = `<svg viewBox="5.5 5.5 21 21" class="studio-logo" aria-hidden="true">
   <g fill="var(--accent)" transform="rotate(45 16 16)">
     <path d="M0,0 C-7,9 -7,9 -7,13.5 C-7,17.7 -3.9,20 0,20 C3.9,20 7,17.7 7,13.5 C7,9 7,9 0,0 Z" transform="translate(16,16) rotate(0) scale(0.55)"/>
     <path d="M0,0 C-7,9 -7,9 -7,13.5 C-7,17.7 -3.9,20 0,20 C3.9,20 7,17.7 7,13.5 C7,9 7,9 0,0 Z" transform="translate(16,16) rotate(90) scale(0.55)"/>

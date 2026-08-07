@@ -71,8 +71,8 @@ button:disabled { opacity: 0.5; cursor: default; }
 
 .browser-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 16px; }
 .browser-header h2 { margin: 0; }
-.browser-title { display: flex; align-items: center; gap: 8px; }
-.studio-logo { width: 44px; height: 44px; flex-shrink: 0; position: relative; top: 1px; }
+.browser-title { display: flex; align-items: center; gap: 10px; }
+.studio-logo { width: 29px; height: 29px; flex-shrink: 0; position: relative; top: 1px; }
 .corpus-toggle-btn { font-size: 12px; padding: 4px 10px; }
 
 .corpus-panel {
