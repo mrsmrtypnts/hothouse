@@ -182,27 +182,40 @@ let corpusSummary = null;
 let promptDiffDismissed = false;
 let negPromptDiffDismissed = false;
 
-// in-progress edits (diff-dismissed state, breed mode, denoising strength)
-// for any focus *other than the current one*, keyed by focus id ("new" is a
-// valid key too) -- so switching to a different thumbnail and back doesn't
-// forget what you were typing, or which mode you had it in. Mode/denoise
-// used to be one sessionStorage value shared across the whole tab, which
-// meant breeding img2img from node A and then visiting node B would leave
-// B (and everywhere else) stuck in img2img too -- these are properties of
-// "what was I about to do to this specific node", not a tab-wide setting.
-// Cleared on a full page reload by design; this is meant to survive
-// navigating around within the same tab, not persist indefinitely.
+// in-progress edits (diff-dismissed state) and every breed-controls setting
+// (mode, denoising strength, reroll probability, the three mutation-
+// intensity sliders, count) for any focus *other than the current one*,
+// keyed by focus id ("new" is a valid key too) -- so switching to a
+// different thumbnail and back doesn't forget what you were typing or had
+// dialed in. These used to be sessionStorage values shared across the whole
+// tab, which meant e.g. breeding img2img from node A and then visiting node
+// B would leave B (and everywhere else) stuck in img2img too, or cranking
+// Lora mutations up for one experimental node would silently carry that
+// setting into every other node you looked at afterward -- these are all
+// properties of "what was I about to do to this specific node", not a
+// tab-wide setting. Cleared on a full page reload by design; this is meant
+// to survive navigating around within the same tab, not persist indefinitely.
 const savedFormSpecs = new Map();
 const savedPromptDismissed = new Map();
 const savedNegPromptDismissed = new Map();
 const savedMode = new Map();
 const savedDenoise = new Map();
+const savedRerollPct = new Map();
+const savedKeywordIntensity = new Map();
+const savedLoraIntensity = new Map();
+const savedOtherIntensity = new Map();
+const savedCount = new Map();
 
-// current focus's breed mode / denoising strength -- mirrors formSpec's
-// lifecycle (see switchFormFocus), read/written directly by
-// buildBreedControls/buildDenoiseField instead of a per-tab getter/setter
+// current focus's breed-controls settings -- mirror formSpec's lifecycle
+// (see switchFormFocus), read/written directly by the breed-controls
+// builders instead of a per-tab getter/setter
 let currentMode = "txt2img";
 let currentDenoise = 0.75;
+let currentRerollPct = 50;
+let currentKeywordIntensity = 2.5;
+let currentLoraIntensity = 2.5;
+let currentOtherIntensity = 0.5;
+let currentCount = 4;
 
 // Call whenever the effective focus is about to change to `newFocusId`.
 // Stashes the outgoing focus's in-progress state (if any) and restores
@@ -215,9 +228,11 @@ let currentDenoise = 0.75;
 // was itself generated, not a hardcoded txt2img/0.75: a node born via
 // img2img should start life expecting to breed the same way, and a node
 // bred at denoising_strength 0.4 should offer 0.4 as the starting point,
-// not always reset to 0.75. Once you've actually touched the toggle/slider
-// for a given node in this tab, that sticks (see savedMode/savedDenoise
-// above) and wins over these defaults on every future visit.
+// not always reset to 0.75. Reroll/intensities/count have no equivalent
+// "how was I generated" signal to inherit, so their first-visit default is
+// just the same static default as before. Once you've actually touched a
+// control for a given node in this tab, that sticks (the saved* Maps above)
+// and wins over these defaults on every future visit.
 function switchFormFocus(newFocusId, defaultMode = "txt2img", defaultDenoise = 0.75) {
   const changed = formFocusId !== newFocusId;
   if (changed) {
@@ -227,12 +242,22 @@ function switchFormFocus(newFocusId, defaultMode = "txt2img", defaultDenoise = 0
       savedNegPromptDismissed.set(formFocusId, negPromptDiffDismissed);
       savedMode.set(formFocusId, currentMode);
       savedDenoise.set(formFocusId, currentDenoise);
+      savedRerollPct.set(formFocusId, currentRerollPct);
+      savedKeywordIntensity.set(formFocusId, currentKeywordIntensity);
+      savedLoraIntensity.set(formFocusId, currentLoraIntensity);
+      savedOtherIntensity.set(formFocusId, currentOtherIntensity);
+      savedCount.set(formFocusId, currentCount);
     }
     formFocusId = newFocusId;
     promptDiffDismissed = savedPromptDismissed.get(newFocusId) || false;
     negPromptDiffDismissed = savedNegPromptDismissed.get(newFocusId) || false;
     currentMode = savedMode.has(newFocusId) ? savedMode.get(newFocusId) : defaultMode;
     currentDenoise = savedDenoise.has(newFocusId) ? savedDenoise.get(newFocusId) : defaultDenoise;
+    currentRerollPct = savedRerollPct.has(newFocusId) ? savedRerollPct.get(newFocusId) : 50;
+    currentKeywordIntensity = savedKeywordIntensity.has(newFocusId) ? savedKeywordIntensity.get(newFocusId) : 2.5;
+    currentLoraIntensity = savedLoraIntensity.has(newFocusId) ? savedLoraIntensity.get(newFocusId) : 2.5;
+    currentOtherIntensity = savedOtherIntensity.has(newFocusId) ? savedOtherIntensity.get(newFocusId) : 0.5;
+    currentCount = savedCount.has(newFocusId) ? savedCount.get(newFocusId) : 4;
   }
   return changed;
 }
@@ -939,35 +964,37 @@ function buildForm(spec, knownModels, parentSpec) {
 }
 
 function getRerollPct() {
-  const stored = parseInt(sessionStorage.getItem("breederV2Reroll"), 10);
-  return isNaN(stored) ? 50 : stored;
+  return currentRerollPct;
 }
 function setRerollPct(pct) {
-  sessionStorage.setItem("breederV2Reroll", String(pct));
+  currentRerollPct = pct;
 }
 // Three independent "expected mutation count" sliders, mirroring
 // mutate.py's KEYWORD_MUTATORS/LORA_MUTATORS/OTHER_MUTATORS families --
 // replaces the old single combined "Mutation strength" field.
 function getKeywordIntensity() {
-  const stored = parseFloat(sessionStorage.getItem("breederV2KeywordIntensity"));
-  return isNaN(stored) ? 2.5 : stored;
+  return currentKeywordIntensity;
 }
 function setKeywordIntensity(v) {
-  sessionStorage.setItem("breederV2KeywordIntensity", String(v));
+  currentKeywordIntensity = v;
 }
 function getLoraIntensity() {
-  const stored = parseFloat(sessionStorage.getItem("breederV2LoraIntensity"));
-  return isNaN(stored) ? 2.5 : stored;
+  return currentLoraIntensity;
 }
 function setLoraIntensity(v) {
-  sessionStorage.setItem("breederV2LoraIntensity", String(v));
+  currentLoraIntensity = v;
 }
 function getOtherIntensity() {
-  const stored = parseFloat(sessionStorage.getItem("breederV2OtherIntensity"));
-  return isNaN(stored) ? 0.5 : stored;
+  return currentOtherIntensity;
 }
 function setOtherIntensity(v) {
-  sessionStorage.setItem("breederV2OtherIntensity", String(v));
+  currentOtherIntensity = v;
+}
+function getCount() {
+  return currentCount;
+}
+function setCount(v) {
+  currentCount = v;
 }
 
 function buildRerollField() {
@@ -1034,7 +1061,11 @@ function buildBreedControls(node) {
   const box = el("div", { class: "breed-controls" });
 
   const countInput = el("input", { type: "number", min: "1", max: "30" });
-  countInput.value = "4";
+  countInput.value = String(getCount());
+  countInput.addEventListener("input", () => {
+    const v = parseInt(countInput.value, 10);
+    if (!isNaN(v)) setCount(v);
+  });
 
   const reroll = buildRerollField();
   const keywordIntensity = buildIntensityField("Keyword mutations", getKeywordIntensity, setKeywordIntensity);
@@ -1103,7 +1134,11 @@ function buildFreshBreedControls() {
   const box = el("div", { class: "breed-controls" });
 
   const countInput = el("input", { type: "number", min: "1", max: "30" });
-  countInput.value = "4";
+  countInput.value = String(getCount());
+  countInput.addEventListener("input", () => {
+    const v = parseInt(countInput.value, 10);
+    if (!isNaN(v)) setCount(v);
+  });
 
   const reroll = buildRerollField();
   const keywordIntensity = buildIntensityField("Keyword mutations", getKeywordIntensity, setKeywordIntensity);
