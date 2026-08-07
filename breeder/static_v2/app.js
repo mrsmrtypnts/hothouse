@@ -218,6 +218,27 @@ const EXPECT_SCAN_TIMEOUT_MS = 10000;
 let promptDiffDismissed = false;
 let negPromptDiffDismissed = false;
 
+// Map-like, but backed by sessionStorage under a namespaced
+// "<prefix>:<nodeId>" key instead of plain memory -- see savedMode etc.
+// below for why this matters. Still per-tab (sessionStorage is never shared
+// across tabs, even same-origin), so this doesn't reintroduce the original
+// cross-tab-bleed bug that per-node stickiness was built to fix in the
+// first place; it only fixes surviving *this* tab reloading.
+function persistentMap(storageKeyPrefix) {
+  return {
+    has(key) {
+      return sessionStorage.getItem(`${storageKeyPrefix}:${key}`) !== null;
+    },
+    get(key) {
+      const raw = sessionStorage.getItem(`${storageKeyPrefix}:${key}`);
+      return raw === null ? undefined : JSON.parse(raw);
+    },
+    set(key, value) {
+      sessionStorage.setItem(`${storageKeyPrefix}:${key}`, JSON.stringify(value));
+    },
+  };
+}
+
 // in-progress edits (diff-dismissed state) and every breed-controls setting
 // (mode, denoising strength, reroll probability, the three mutation-
 // intensity sliders, count) for any focus *other than the current one*,
@@ -229,18 +250,28 @@ let negPromptDiffDismissed = false;
 // Lora mutations up for one experimental node would silently carry that
 // setting into every other node you looked at afterward -- these are all
 // properties of "what was I about to do to this specific node", not a
-// tab-wide setting. Cleared on a full page reload by design; this is meant
-// to survive navigating around within the same tab, not persist indefinitely.
+// tab-wide setting.
+//
+// The breed-controls dials (mode/denoise/reroll/intensities/count) use
+// persistentMap rather than a plain Map: a plain in-memory Map is wiped by
+// any reload of this tab, including ones the user never asked for or
+// noticed -- Arc and Safari both silently reload backgrounded tabs under
+// memory pressure. That looked like "the mutation rate sliders randomly
+// reset to default sometimes, can't tell why" from the user's side, when
+// really it tracked whatever the browser's tab-eviction heuristics were
+// doing, not anything happening in Studio itself. formSpec/diff-dismissed
+// state stays a plain Map (in-progress edit content, not a dial setting --
+// fine to lose on a real reload, and much messier to serialize safely).
 const savedFormSpecs = new Map();
 const savedPromptDismissed = new Map();
 const savedNegPromptDismissed = new Map();
-const savedMode = new Map();
-const savedDenoise = new Map();
-const savedRerollPct = new Map();
-const savedKeywordIntensity = new Map();
-const savedLoraIntensity = new Map();
-const savedOtherIntensity = new Map();
-const savedCount = new Map();
+const savedMode = persistentMap("breederV2SavedMode");
+const savedDenoise = persistentMap("breederV2SavedDenoise");
+const savedRerollPct = persistentMap("breederV2SavedRerollPct");
+const savedKeywordIntensity = persistentMap("breederV2SavedKeywordIntensity");
+const savedLoraIntensity = persistentMap("breederV2SavedLoraIntensity");
+const savedOtherIntensity = persistentMap("breederV2SavedOtherIntensity");
+const savedCount = persistentMap("breederV2SavedCount");
 
 // current focus's breed-controls settings -- mirror formSpec's lifecycle
 // (see switchFormFocus), read/written directly by the breed-controls
@@ -1042,11 +1073,19 @@ function buildForm(spec, knownModels, parentSpec) {
   return form;
 }
 
+// Setters below write through to the current focus's persistentMap entry
+// immediately, not just when switchFormFocus later stashes it on switching
+// away -- otherwise a slider you'd just dragged, on a node you hadn't
+// navigated away from yet, was still only sitting in the plain `current*`
+// variable and just as vulnerable to a surprise tab reload as before this
+// fix. formFocusId can legitimately be null very briefly (before the first
+// switchFormFocus call of the session), hence the guard.
 function getRerollPct() {
   return currentRerollPct;
 }
 function setRerollPct(pct) {
   currentRerollPct = pct;
+  if (formFocusId != null) savedRerollPct.set(formFocusId, pct);
 }
 // Three independent "expected mutation count" sliders, mirroring
 // mutate.py's KEYWORD_MUTATORS/LORA_MUTATORS/OTHER_MUTATORS families --
@@ -1056,24 +1095,28 @@ function getKeywordIntensity() {
 }
 function setKeywordIntensity(v) {
   currentKeywordIntensity = v;
+  if (formFocusId != null) savedKeywordIntensity.set(formFocusId, v);
 }
 function getLoraIntensity() {
   return currentLoraIntensity;
 }
 function setLoraIntensity(v) {
   currentLoraIntensity = v;
+  if (formFocusId != null) savedLoraIntensity.set(formFocusId, v);
 }
 function getOtherIntensity() {
   return currentOtherIntensity;
 }
 function setOtherIntensity(v) {
   currentOtherIntensity = v;
+  if (formFocusId != null) savedOtherIntensity.set(formFocusId, v);
 }
 function getCount() {
   return currentCount;
 }
 function setCount(v) {
   currentCount = v;
+  if (formFocusId != null) savedCount.set(formFocusId, v);
 }
 
 function buildRerollField() {
@@ -1129,6 +1172,8 @@ function buildDenoiseField() {
     const v = parseFloat(slider.value);
     readout.textContent = v.toFixed(2);
     currentDenoise = v;
+    // write through immediately, same reasoning as setRerollPct etc. above
+    if (formFocusId != null) savedDenoise.set(formFocusId, v);
   });
   row.appendChild(slider);
   row.appendChild(readout);
@@ -1169,8 +1214,15 @@ function buildBreedControls(node) {
     img2imgBtn.classList.toggle("active", mode === "img2img");
     denoise.wrap.style.display = mode === "img2img" ? "" : "none";
   }
-  txt2imgBtn.addEventListener("click", () => { mode = "txt2img"; currentMode = mode; updateModeUI(); });
-  img2imgBtn.addEventListener("click", () => { mode = "img2img"; currentMode = mode; updateModeUI(); });
+  // write through immediately, same reasoning as setRerollPct etc. above
+  txt2imgBtn.addEventListener("click", () => {
+    mode = "txt2img"; currentMode = mode; updateModeUI();
+    if (formFocusId != null) savedMode.set(formFocusId, mode);
+  });
+  img2imgBtn.addEventListener("click", () => {
+    mode = "img2img"; currentMode = mode; updateModeUI();
+    if (formFocusId != null) savedMode.set(formFocusId, mode);
+  });
   updateModeUI();
   modeToggle.appendChild(txt2imgBtn);
   modeToggle.appendChild(img2imgBtn);
