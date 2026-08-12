@@ -36,10 +36,17 @@ def pick_folder():
 
 
 def prompt_save_as(default_name, default_dir):
-    # Activate the frontmost app first so the dialog gets keyboard focus
-    # (native messaging hosts are background processes and don't own the UI).
+    # Native messaging hosts are background processes with no app window of
+    # their own, so a `choose file name` panel invoked from bare osascript
+    # can appear without real keyboard focus — Esc (and Return) silently do
+    # nothing because the key events are still routed to whatever app was
+    # already frontmost (usually the browser), not the panel. Activating
+    # System Events first forces a genuine focus handoff to the process
+    # that's about to own the panel, so Esc reliably cancels it just like
+    # any normal Save panel. (Re-activating "the already-frontmost app", as
+    # this used to do, is a no-op and doesn't fix focus.)
     script = (
-        'tell application (path to frontmost application as text) to activate\n'
+        'tell application "System Events" to activate\n'
         f'POSIX path of (choose file name '
         f'with prompt "File already exists — choose a new name or location:" '
         f'default name "{default_name}" '

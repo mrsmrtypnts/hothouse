@@ -86,7 +86,7 @@
         div.style.display = 'none';
         return;
       }
-      performDownload(img);
+      performDownload(img, e.shiftKey);
     });
 
     return div;
@@ -95,7 +95,14 @@
   // Shared by the hover-button click and the 'd' keyboard shortcut. Not tied
   // to hover state — setImgState/syncBadge already route the indicator to
   // whichever of the shared button or a per-image badge applies.
-  function performDownload(img) {
+  //
+  // `force` (Shift held) is required to actually open the overwrite dialog
+  // on a dupe. A bare repeat — e.g. pressing 'd' again because the "already
+  // exists" toast wasn't noticed — always just re-shows that toast instead
+  // of escalating to the (slow, modal) save-as dialog. This makes the dialog
+  // meaningfully harder to trigger by accident, and guarantees the toast is
+  // shown at least once before it can ever appear.
+  function performDownload(img, force = false) {
     if (!runtimeAlive()) {
       showToast(img, '✗ Extension was reloaded — please refresh this page');
       return;
@@ -109,8 +116,10 @@
 
     const btn = getOverlay().querySelector('.img-dl-btn');
 
-    // Second attempt within the dupe window → open the file picker
-    const allowDupe = !!(dupeState && dupeState.src === src && Date.now() < dupeState.expires);
+    // Deliberate (Shift-held) attempt within the dupe window → open the file
+    // picker. Everything else — including a plain repeated 'd' — falls
+    // through to a normal attempt, which just re-shows the dupe toast.
+    const allowDupe = force && !!(dupeState && dupeState.src === src && Date.now() < dupeState.expires);
     if (allowDupe) dupeState = null;
 
     setImgState(btn, img, '…', false);
@@ -126,7 +135,7 @@
       if (response?.dupe) {
         // First encounter with a dupe — arm the second-attempt window
         dupeState = { src, expires: Date.now() + 5000 };
-        showToast(img, '⚠ Already exists — repeat to choose a location');
+        showToast(img, '⚠ Already exists — hold Shift and press d to choose a location');
         clearImgState(btn, img);
       } else if (lastErr || !response?.success) {
         const err = response?.error || lastErr?.message || 'Download failed';
@@ -208,9 +217,25 @@
 
   function showToast(img, message) {
     const t = getToast();
-    const rect = img.getBoundingClientRect();
-    t.style.left      = `${rect.left + window.scrollX + rect.width  / 2}px`;
-    t.style.top       = `${rect.top  + window.scrollY + rect.height / 2}px`;
+    // The result callback fires after a round trip through the service
+    // worker and native host, during which a gallery/lightbox can swap or
+    // remove the <img> (e.g. auto-advance). Anchoring to a stale/detached
+    // element's rect (all-zero, or wherever it used to be) silently hides
+    // the toast off-screen — which is exactly what made "already exists"
+    // seem to not appear. Fall back to viewport center whenever the image
+    // isn't in a sane state, so the toast is always actually seen.
+    const inDom = img && document.body.contains(img);
+    const rect  = inDom ? img.getBoundingClientRect() : null;
+    const degenerate = !rect || (rect.width === 0 && rect.height === 0);
+    if (degenerate) {
+      // Document-relative (this element is position: absolute), landing at
+      // the center of whatever the viewport currently shows.
+      t.style.left = `${window.scrollX + window.innerWidth  / 2}px`;
+      t.style.top  = `${window.scrollY + window.innerHeight / 2}px`;
+    } else {
+      t.style.left = `${rect.left + window.scrollX + rect.width  / 2}px`;
+      t.style.top  = `${rect.top  + window.scrollY + rect.height / 2}px`;
+    }
     t.style.transform = 'translate(-50%, -50%)';
     t.textContent = message;
     t.style.opacity = '1';
@@ -278,15 +303,17 @@
   // Single-key shortcut: 'd' downloads the biggest image on the page (e.g.
   // the current image in a lightbox), no hover required.
   document.addEventListener('keydown', (e) => {
-    if (e.key !== 'd' || e.repeat) return;
-    if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey || e.isComposing) return;
+    if (e.key.toLowerCase() !== 'd' || e.repeat) return;
+    // Shift is allowed through (and forwarded) so Shift+d can force the
+    // overwrite dialog on an already-armed dupe — see performDownload().
+    if (e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return;
     const t = e.target;
     if (t?.tagName === 'INPUT' || t?.tagName === 'TEXTAREA' || t?.tagName === 'SELECT' || t?.isContentEditable) return;
     if (!runtimeAlive()) return;
     const img = findBiggestImage();
     if (!img) return;
     e.preventDefault();
-    performDownload(img);
+    performDownload(img, e.shiftKey);
   });
 
   document.addEventListener('mouseover', (e) => {
