@@ -103,6 +103,7 @@ let lastDetailFocusId = null;
 // nodes that aren't even visible in a filtered view.
 document.addEventListener("keydown", (e) => {
   if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key)) return;
+  if (lightboxEl) return; // don't silently change focus while the lightbox is up
   const active = document.activeElement;
   if (active && ["INPUT", "TEXTAREA", "SELECT"].includes(active.tagName)) return;
 
@@ -158,6 +159,50 @@ function setBrowserWidth(px) {
 // is holding onto while document-level mousemove/mouseup listeners stay bound
 // to now-orphaned elements, producing exactly the "weird things" that follow
 let isDraggingSplitter = false;
+
+const DEFAULT_FORM_WIDTH = 420;
+const MIN_FORM_WIDTH = 320;
+const MAX_FORM_WIDTH = 700;
+
+function getFormWidth() {
+  const stored = parseInt(sessionStorage.getItem("breederV2FormWidth"), 10);
+  return isNaN(stored) ? DEFAULT_FORM_WIDTH : stored;
+}
+function setFormWidth(px) {
+  sessionStorage.setItem("breederV2FormWidth", String(px));
+}
+
+// second instance of the same drag pattern as buildSplitter -- the form sits
+// on the *right* of what it resizes (image | splitter | form), so growing it
+// means dragging left (negative delta), the opposite sign from buildSplitter
+function buildImageFormSplitter(formEl) {
+  const splitter = el("div", { class: "splitter" });
+  splitter.addEventListener("mousedown", (e) => {
+    e.preventDefault();
+    isDraggingSplitter = true;
+    const startX = e.clientX;
+    const startWidth = formEl.getBoundingClientRect().width;
+    splitter.classList.add("dragging");
+
+    function onMove(moveEvent) {
+      const next = Math.min(
+        MAX_FORM_WIDTH,
+        Math.max(MIN_FORM_WIDTH, startWidth - (moveEvent.clientX - startX))
+      );
+      formEl.style.flexBasis = `${next}px`;
+    }
+    function onUp() {
+      isDraggingSplitter = false;
+      splitter.classList.remove("dragging");
+      setFormWidth(formEl.getBoundingClientRect().width);
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+    }
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  });
+  return splitter;
+}
 
 function buildSplitter(browserPanel) {
   const splitter = el("div", { class: "splitter" });
@@ -370,6 +415,39 @@ function switchFormFocus(newFocusId, defaultMode = "txt2img", defaultDenoise = 0
   }
   return changed;
 }
+
+// true while the full-viewport image lightbox is open -- arrow-key nav must
+// not silently change the underlying focused node while it's up (confusing
+// to close it and find yourself somewhere else), and Escape needs to close
+// it rather than whatever else Escape might otherwise do
+let lightboxEl = null;
+
+function closeLightbox() {
+  if (lightboxEl) {
+    lightboxEl.remove();
+    lightboxEl = null;
+  }
+}
+
+function openLightbox(src) {
+  const overlay = el("div", { class: "img-lightbox" });
+  overlay.appendChild(el("img", { src, alt: "full size" }));
+  const closeBtn = el("button", { class: "img-lightbox-close", text: "×" });
+  closeBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    closeLightbox();
+  });
+  overlay.appendChild(closeBtn);
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) closeLightbox();
+  });
+  document.body.appendChild(overlay);
+  lightboxEl = overlay;
+}
+
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && lightboxEl) closeLightbox();
+});
 
 let hoverEl = null;
 
@@ -800,6 +878,16 @@ const CRUMB_MIN_TAIL = 2;
 // render() rebuilds in the meantime since it's plain module state, not DOM.
 let expandedCrumbsFor = null;
 
+// unlike expandedCrumbsFor above, this is a standing preference ("I want the
+// ancestry thumbnails out of the way generally") rather than a per-visit
+// reveal, so it's sessionStorage-persisted rather than reset on navigate()
+function getCrumbsCollapsed() {
+  return sessionStorage.getItem("breederV2CrumbsCollapsed") === "1";
+}
+function setCrumbsCollapsed(collapsed) {
+  sessionStorage.setItem("breederV2CrumbsCollapsed", collapsed ? "1" : "0");
+}
+
 function sliceWithEllipsis(ancestors, head, tail) {
   if (head + tail >= ancestors.length) return ancestors;
   return [...ancestors.slice(0, head), null, ...ancestors.slice(ancestors.length - tail)];
@@ -867,6 +955,25 @@ function fitCrumbBar(bar, itemsWrap, ancestors, nodeId, byId) {
 
 function breadcrumbs(ancestors, nodeId) {
   const bar = el("div", { class: "crumbs" });
+
+  if (ancestors.length > 0) {
+    const collapseToggle = el("button", { class: "crumb-collapse-toggle" });
+    const setToggleLabel = () => {
+      collapseToggle.textContent = getCrumbsCollapsed()
+        ? `▸ ${ancestors.length} ancestor${ancestors.length === 1 ? "" : "s"}`
+        : "▾ hide";
+    };
+    setToggleLabel();
+    collapseToggle.addEventListener("click", () => {
+      setCrumbsCollapsed(!getCrumbsCollapsed());
+      render();
+    });
+    bar.appendChild(collapseToggle);
+    if (getCrumbsCollapsed()) {
+      return bar;
+    }
+  }
+
   const itemsWrap = el("div", { class: "crumb-items" });
   bar.appendChild(itemsWrap);
   const byId = new Map(ancestors.map((a) => [a.id, a]));
@@ -1292,11 +1399,16 @@ function buildBreedControls(node) {
     render();
   });
 
-  box.appendChild(fieldRow("Count", countInput));
-  box.appendChild(sliderStack);
-  box.appendChild(modeToggle);
-  box.appendChild(denoise.wrap);
-  box.appendChild(breedBtn);
+  const topRow = el("div", { class: "breed-controls-top" });
+  topRow.appendChild(fieldRow("Count", countInput));
+  topRow.appendChild(sliderStack);
+  box.appendChild(topRow);
+
+  const bottomRow = el("div", { class: "breed-controls-bottom" });
+  bottomRow.appendChild(modeToggle);
+  bottomRow.appendChild(denoise.wrap);
+  bottomRow.appendChild(breedBtn);
+  box.appendChild(bottomRow);
   return box;
 }
 
@@ -1340,9 +1452,14 @@ function buildFreshBreedControls() {
     navigate(nodes[0].id);
   });
 
-  box.appendChild(fieldRow("Count", countInput));
-  box.appendChild(sliderStack);
-  box.appendChild(breedBtn);
+  const topRow = el("div", { class: "breed-controls-top" });
+  topRow.appendChild(fieldRow("Count", countInput));
+  topRow.appendChild(sliderStack);
+  box.appendChild(topRow);
+
+  const bottomRow = el("div", { class: "breed-controls-bottom" });
+  bottomRow.appendChild(breedBtn);
+  box.appendChild(bottomRow);
   return box;
 }
 
@@ -1765,6 +1882,8 @@ async function buildDetailPanel(focusId, knownModels) {
     imageBox.appendChild(el("div", { class: "placeholder", text: "not generated yet" }));
     main.appendChild(imageBox);
     const formEl = buildForm(seedSpec, knownModels);
+    formEl.style.flexBasis = `${getFormWidth()}px`;
+    main.appendChild(buildImageFormSplitter(formEl));
     main.appendChild(formEl);
     panel.appendChild(main);
     panel.appendChild(buildFreshBreedControls());
@@ -1793,7 +1912,9 @@ async function buildDetailPanel(focusId, knownModels) {
   const main = el("div", { class: "detail-main" });
   const imageBox = el("div", { class: "detail-image" });
   if (node.status === "done") {
-    imageBox.appendChild(el("img", { src: `/images/${node.image_file}`, alt: "focused" }));
+    const focusedImg = el("img", { src: `/images/${node.image_file}`, alt: "focused" });
+    focusedImg.addEventListener("click", () => openLightbox(focusedImg.src));
+    imageBox.appendChild(focusedImg);
   } else if (node.status === "error") {
     const errBox = el("div", { class: "placeholder error-placeholder" });
     errBox.appendChild(el("div", { class: "error-text", text: node.error || "(no error message)" }));
@@ -1817,6 +1938,8 @@ async function buildDetailPanel(focusId, knownModels) {
   const parentNode = ancestors.length >= 2 ? ancestors[ancestors.length - 2] : null;
   const seedSpec = rebuildForm ? (savedFormSpecs.get(focusId) ?? node.spec) : formSpec;
   const formEl = buildForm(seedSpec, knownModels, parentNode && parentNode.spec);
+  formEl.style.flexBasis = `${getFormWidth()}px`;
+  main.appendChild(buildImageFormSplitter(formEl));
   main.appendChild(formEl);
   panel.appendChild(main);
 

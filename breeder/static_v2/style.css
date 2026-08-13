@@ -259,6 +259,15 @@ button:disabled { opacity: 0.5; cursor: default; }
 }
 
 .crumbs { display: flex; align-items: center; gap: 4px; margin-bottom: 20px; font-size: 14px; color: var(--text-dim); flex-shrink: 0; }
+.crumb-collapse-toggle {
+  background: none;
+  border: none;
+  color: var(--text-faint);
+  font-size: 12px;
+  padding: 4px 6px;
+  cursor: pointer;
+}
+.crumb-collapse-toggle:hover { color: var(--text-dim); }
 .crumb-items { display: flex; align-items: center; gap: 4px; }
 .crumbs.expanded .crumb-items { flex-wrap: wrap; row-gap: 8px; }
 .crumb-link { display: block; color: inherit; text-decoration: none; }
@@ -383,6 +392,43 @@ button:disabled { opacity: 0.5; cursor: default; }
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+.detail-image img { cursor: zoom-in; }
+
+.img-lightbox {
+  position: fixed;
+  inset: 0;
+  background: rgba(6, 6, 8, 0.92);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  cursor: zoom-out;
+}
+.img-lightbox img {
+  max-width: 95vw;
+  max-height: 95vh;
+  object-fit: contain;
+  border-radius: var(--radius);
+  cursor: default;
+}
+.img-lightbox-close {
+  position: absolute;
+  top: 20px;
+  right: 24px;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: rgba(16, 16, 20, 0.75);
+  border: 1px solid var(--border-light);
+  color: var(--text);
+  font-size: 18px;
+  line-height: 34px;
+  text-align: center;
+  padding: 0;
+  cursor: pointer;
+}
+.img-lightbox-close:hover { background: var(--accent); border-color: var(--accent-hover); }
+
 .detail-form {
   flex: 0 1 420px;
   min-width: 320px;
@@ -457,12 +503,19 @@ button:disabled { opacity: 0.5; cursor: default; }
 .breed-controls {
   flex-shrink: 0;
   display: flex;
-  align-items: flex-start;
+  flex-direction: column;
   gap: 12px;
-  flex-wrap: wrap;
   padding-top: 16px;
   border-top: 1px solid var(--border);
 }
+/* two independent wrap groups, not one -- previously Count/sliders/mode/
+   denoise/Breed were all one flex-wrap row, so when Breed didn't fit it
+   wrapped below the *tallest* item (the multi-row slider stack), leaving a
+   large empty gap between the sliders and a Breed button stranded well below
+   them. Splitting the tall sliderStack from the compact mode/denoise/Breed
+   controls means the latter only wrap against their own (short) height. */
+.breed-controls-top { display: flex; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+.breed-controls-bottom { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .reroll-row { display: flex; align-items: center; gap: 8px; height: 31px; }
 .reroll-row input[type=range] { width: 120px; accent-color: var(--accent); }
 .reroll-readout { min-width: 34px; font-size: 13px; color: var(--text-dim); }
