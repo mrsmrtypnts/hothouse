@@ -1354,6 +1354,32 @@ function buildLoraCorpusWarning() {
   });
 }
 
+// collapsed by default -- Count + the mutation sliders were the whole
+// reason this panel felt cramped in the first place (see bbc4fea's commit
+// message for the measurements), so the default state is the compact one;
+// expanding to actually tune a dial is a deliberate action. sessionStorage
+// (not reset on navigate()) since this is a standing "keep this out of my
+// way" preference, same reasoning as getCrumbsCollapsed above -- but a
+// separate key, since someone may want the dials tucked away without also
+// wanting the ancestry trail hidden, or vice versa.
+function getDialsCollapsed() {
+  const v = sessionStorage.getItem("breederV2DialsCollapsed");
+  return v === null ? true : v === "1";
+}
+function setDialsCollapsed(collapsed) {
+  sessionStorage.setItem("breederV2DialsCollapsed", collapsed ? "1" : "0");
+}
+
+function buildDialsToggle() {
+  const btn = el("button", { class: "dials-collapse-toggle" });
+  btn.textContent = getDialsCollapsed() ? "▸ mutation dials" : "▾ hide dials";
+  btn.addEventListener("click", () => {
+    setDialsCollapsed(!getDialsCollapsed());
+    render();
+  });
+  return btn;
+}
+
 function buildCountField() {
   // styled as another slider-row rather than the taller label-above
   // fieldRow it used to be -- folding it into the same single-column list
@@ -1484,7 +1510,10 @@ function buildBreedControls(node) {
     render();
   });
 
-  box.appendChild(sliderStack);
+  box.appendChild(buildDialsToggle());
+  if (!getDialsCollapsed()) {
+    box.appendChild(sliderStack);
+  }
 
   const bottomRow = el("div", { class: "breed-controls-bottom" });
   bottomRow.appendChild(modeToggle);
@@ -1529,7 +1558,10 @@ function buildFreshBreedControls() {
     navigate(nodes[0].id);
   });
 
-  box.appendChild(sliderStack);
+  box.appendChild(buildDialsToggle());
+  if (!getDialsCollapsed()) {
+    box.appendChild(sliderStack);
+  }
 
   const bottomRow = el("div", { class: "breed-controls-bottom" });
   bottomRow.appendChild(breedBtn);

@@ -512,6 +512,20 @@ button:disabled { opacity: 0.5; cursor: default; }
   padding-top: 16px;
   border-top: 1px solid var(--border);
 }
+/* same look as .crumb-collapse-toggle -- collapsed by default (see
+   getDialsCollapsed), so this is the only part of the dials that's ever
+   guaranteed visible */
+.dials-collapse-toggle {
+  align-self: flex-start;
+  background: none;
+  border: none;
+  color: var(--text-faint);
+  font-size: 12px;
+  padding: 4px 6px;
+  margin: 0 0 0 -6px;
+  cursor: pointer;
+}
+.dials-collapse-toggle:hover { color: var(--text-dim); }
 /* Count used to get its own wrapping row beside the slider stack
    (.breed-controls-top), but at any form width narrow enough for the
    sliders to need their own line -- i.e. almost always, since a single
