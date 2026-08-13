@@ -449,7 +449,9 @@ function openLightbox(nodeId, src) {
   lightboxNodeId = nodeId;
   lightboxOpenedFrom = nodeId;
   const overlay = el("div", { class: "img-lightbox" });
-  overlay.appendChild(el("img", { src, alt: "full size" }));
+  const content = el("div", { class: "img-lightbox-content" });
+  content.appendChild(el("img", { src, alt: "full size" }));
+  overlay.appendChild(content);
   const closeBtn = el("button", { class: "img-lightbox-close", text: "×" });
   closeBtn.addEventListener("click", (e) => {
     e.stopPropagation();
@@ -463,26 +465,39 @@ function openLightbox(nodeId, src) {
   lightboxEl = overlay;
 }
 
-// steps to the next/previous *viewable* (status "done") thumbnail in the
-// same order the grid shows them, skipping over pending/error ones -- the
-// lightbox only ever shows a real image, never a placeholder
+// stand-in for a thumbnail the carousel has stepped onto that isn't a
+// finished image yet -- still generating, or failed. Shown in place of the
+// <img> rather than skipping past these thumbnails: silently jumping over
+// them made the arrow keys feel broken/inconsistent with the grid the
+// carousel is walking (a batch of 6 could visibly step by only 2 or 3),
+// and gave no way to tell a pending generation had finished while you sat
+// looking at its neighbor.
+function lightboxPlaceholder(status) {
+  if (status === "error") {
+    return el("div", { class: "placeholder img-lightbox-placeholder" }, [
+      el("div", { class: "error-text", text: "Generation failed" }),
+    ]);
+  }
+  return el("div", { class: "placeholder img-lightbox-placeholder" }, [el("div", { class: "spinner" })]);
+}
+
+// steps to the adjacent thumbnail in the same order the grid shows them,
+// one card per keypress regardless of its status (see lightboxPlaceholder)
 function moveLightbox(delta) {
   const cards = Array.from(document.querySelectorAll(".thumb-card"));
   if (!cards.length) return;
   const ids = cards.map((c) => new URLSearchParams(c.getAttribute("href").slice(1)).get("n"));
   let idx = ids.indexOf(lightboxNodeId);
   if (idx === -1) return;
-  for (let tries = 0; tries < ids.length; tries++) {
-    idx += delta;
-    if (idx < 0 || idx >= ids.length) return;
-    const img = cards[idx].querySelector("img");
-    if (img) {
-      lightboxNodeId = ids[idx];
-      history.replaceState({}, "", `?n=${lightboxNodeId}`);
-      lightboxEl.querySelector("img").src = img.src;
-      return;
-    }
-  }
+  idx += delta;
+  if (idx < 0 || idx >= ids.length) return;
+  lightboxNodeId = ids[idx];
+  history.replaceState({}, "", `?n=${lightboxNodeId}`);
+  const card = cards[idx];
+  const content = lightboxEl.querySelector(".img-lightbox-content");
+  content.replaceChildren();
+  const img = card.querySelector("img");
+  content.appendChild(img ? el("img", { src: img.src, alt: "full size" }) : lightboxPlaceholder(card.dataset.status));
 }
 
 document.addEventListener("keydown", (e) => {
@@ -668,7 +683,7 @@ function wireNavClick(el, id) {
 }
 
 function thumbCard(node, selected) {
-  const card = el("a", { class: `thumb-card${selected ? " selected" : ""}`, href: `?n=${node.id}` });
+  const card = el("a", { class: `thumb-card${selected ? " selected" : ""}`, href: `?n=${node.id}`, "data-status": node.status });
 
   if (!node.viewed) {
     card.appendChild(el("div", { class: "unread-dot" }));
@@ -1325,10 +1340,36 @@ function buildRerollField() {
 
 function buildLoraCorpusWarning() {
   if (!corpusSummary || corpusSummary.file_count > 0) return null;
-  return el("div", {
-    class: "corpus-warning",
-    text: "No learned corpus scanned yet -- lora \"add\" mutations will silently no-op, so this slider will mostly remove loras rather than balancing adds and removes. Scan a corpus (\"corpus\" button above) to fix this.",
+  // used to be a standing two-line paragraph block below the Lora slider --
+  // on every session with no corpus scanned yet (the common case for a new
+  // install), that alone was ~55px of permanently-consumed height for a
+  // caveat most people only need to read once. A hover/focus-accessible
+  // icon with the full explanation in `title` keeps the information one
+  // interaction away without taxing the layout by default.
+  return el("span", {
+    class: "corpus-warning-icon",
+    text: "⚠",
+    tabindex: "0",
+    title: "No learned corpus scanned yet -- lora \"add\" mutations will silently no-op, so this slider will mostly remove loras rather than balancing adds and removes. Scan a corpus (\"corpus\" button above) to fix this.",
   });
+}
+
+function buildCountField() {
+  // styled as another slider-row rather than the taller label-above
+  // fieldRow it used to be -- folding it into the same single-column list
+  // as the sliders below (instead of trying, and mostly failing, to pack
+  // it beside them on its own wrapping row) removes a whole extra flex-wrap
+  // negotiation and the awkward standalone line it produced.
+  const wrap = el("div", { class: "slider-row" });
+  wrap.appendChild(el("span", { class: "field-label", text: "Count" }));
+  const input = el("input", { type: "number", min: "1", max: "30", class: "count-input" });
+  input.value = String(getCount());
+  input.addEventListener("input", () => {
+    const v = parseInt(input.value, 10);
+    if (!isNaN(v)) setCount(v);
+  });
+  wrap.appendChild(input);
+  return { wrap, input };
 }
 
 function buildIntensityField(label, getValue, setValue) {
@@ -1373,23 +1414,18 @@ function buildDenoiseField() {
 function buildBreedControls(node) {
   const box = el("div", { class: "breed-controls" });
 
-  const countInput = el("input", { type: "number", min: "1", max: "30" });
-  countInput.value = String(getCount());
-  countInput.addEventListener("input", () => {
-    const v = parseInt(countInput.value, 10);
-    if (!isNaN(v)) setCount(v);
-  });
-
+  const count = buildCountField();
   const reroll = buildRerollField();
   const keywordIntensity = buildIntensityField("Keyword mutations", getKeywordIntensity, setKeywordIntensity);
   const loraIntensity = buildIntensityField("Lora mutations", getLoraIntensity, setLoraIntensity);
   const otherIntensity = buildIntensityField("Other mutations", getOtherIntensity, setOtherIntensity);
+  const loraWarning = buildLoraCorpusWarning();
+  if (loraWarning) loraIntensity.wrap.appendChild(loraWarning);
   const sliderStack = el("div", { class: "mutation-sliders" });
+  sliderStack.appendChild(count.wrap);
   sliderStack.appendChild(reroll.wrap);
   sliderStack.appendChild(keywordIntensity.wrap);
   sliderStack.appendChild(loraIntensity.wrap);
-  const loraWarning = buildLoraCorpusWarning();
-  if (loraWarning) sliderStack.appendChild(loraWarning);
   sliderStack.appendChild(otherIntensity.wrap);
 
   let mode = currentMode;
@@ -1427,7 +1463,7 @@ function buildBreedControls(node) {
     breedBtn.disabled = true;
     breedBtn.textContent = "Breeding...";
     const body = {
-      count: parseInt(countInput.value, 10) || 1,
+      count: parseInt(count.input.value, 10) || 1,
       mode,
       reroll_probability: parseFloat(reroll.slider.value) / 100,
       keyword_intensity: parseFloat(keywordIntensity.slider.value) || 0,
@@ -1448,10 +1484,7 @@ function buildBreedControls(node) {
     render();
   });
 
-  const topRow = el("div", { class: "breed-controls-top" });
-  topRow.appendChild(fieldRow("Count", countInput));
-  topRow.appendChild(sliderStack);
-  box.appendChild(topRow);
+  box.appendChild(sliderStack);
 
   const bottomRow = el("div", { class: "breed-controls-bottom" });
   bottomRow.appendChild(modeToggle);
@@ -1464,23 +1497,18 @@ function buildBreedControls(node) {
 function buildFreshBreedControls() {
   const box = el("div", { class: "breed-controls" });
 
-  const countInput = el("input", { type: "number", min: "1", max: "30" });
-  countInput.value = String(getCount());
-  countInput.addEventListener("input", () => {
-    const v = parseInt(countInput.value, 10);
-    if (!isNaN(v)) setCount(v);
-  });
-
+  const count = buildCountField();
   const reroll = buildRerollField();
   const keywordIntensity = buildIntensityField("Keyword mutations", getKeywordIntensity, setKeywordIntensity);
   const loraIntensity = buildIntensityField("Lora mutations", getLoraIntensity, setLoraIntensity);
   const otherIntensity = buildIntensityField("Other mutations", getOtherIntensity, setOtherIntensity);
+  const loraWarning = buildLoraCorpusWarning();
+  if (loraWarning) loraIntensity.wrap.appendChild(loraWarning);
   const sliderStack = el("div", { class: "mutation-sliders" });
+  sliderStack.appendChild(count.wrap);
   sliderStack.appendChild(reroll.wrap);
   sliderStack.appendChild(keywordIntensity.wrap);
   sliderStack.appendChild(loraIntensity.wrap);
-  const loraWarning = buildLoraCorpusWarning();
-  if (loraWarning) sliderStack.appendChild(loraWarning);
   sliderStack.appendChild(otherIntensity.wrap);
 
   const breedBtn = el("button", { class: "btn-breed", text: "Breed" });
@@ -1488,7 +1516,7 @@ function buildFreshBreedControls() {
     breedBtn.disabled = true;
     breedBtn.textContent = "Breeding...";
     const body = {
-      count: parseInt(countInput.value, 10) || 1,
+      count: parseInt(count.input.value, 10) || 1,
       reroll_probability: parseFloat(reroll.slider.value) / 100,
       keyword_intensity: parseFloat(keywordIntensity.slider.value) || 0,
       lora_intensity: parseFloat(loraIntensity.slider.value) || 0,
@@ -1501,10 +1529,7 @@ function buildFreshBreedControls() {
     navigate(nodes[0].id);
   });
 
-  const topRow = el("div", { class: "breed-controls-top" });
-  topRow.appendChild(fieldRow("Count", countInput));
-  topRow.appendChild(sliderStack);
-  box.appendChild(topRow);
+  box.appendChild(sliderStack);
 
   const bottomRow = el("div", { class: "breed-controls-bottom" });
   bottomRow.appendChild(breedBtn);

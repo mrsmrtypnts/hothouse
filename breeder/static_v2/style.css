@@ -103,16 +103,6 @@ button:disabled { opacity: 0.5; cursor: default; }
 }
 .corpus-rescan-btn { font-size: 12px; padding: 4px 10px; }
 
-.corpus-warning {
-  font-size: 12px;
-  color: #e0a355;
-  border: 1px solid #5a4326;
-  background: rgba(224, 163, 85, 0.08);
-  border-radius: var(--radius-sm);
-  padding: 8px 10px;
-  line-height: 1.4;
-}
-
 .filter-bar {
   display: flex;
   gap: 8px;
@@ -404,13 +394,27 @@ button:disabled { opacity: 0.5; cursor: default; }
   z-index: 1000;
   cursor: zoom-out;
 }
-.img-lightbox img {
+.img-lightbox-content { display: flex; align-items: center; justify-content: center; }
+.img-lightbox-content img {
   max-width: 95vw;
   max-height: 95vh;
   object-fit: contain;
   border-radius: var(--radius);
   cursor: default;
 }
+/* stepping onto a pending/error thumbnail mid-carousel -- see
+   lightboxPlaceholder() in app.js. Sized so the overlay doesn't collapse
+   down to a tiny centered spinner; no dashed border here since that read
+   as a drop-target/upload affordance against the near-black overlay, not
+   as "still working". */
+.img-lightbox-placeholder {
+  min-width: 320px;
+  min-height: 320px;
+  border: none;
+  color: var(--text-dim);
+  font-size: 15px;
+}
+.img-lightbox-placeholder .spinner { width: 40px; height: 40px; }
 .img-lightbox-close {
   position: absolute;
   top: 20px;
@@ -508,13 +512,15 @@ button:disabled { opacity: 0.5; cursor: default; }
   padding-top: 16px;
   border-top: 1px solid var(--border);
 }
-/* two independent wrap groups, not one -- previously Count/sliders/mode/
-   denoise/Breed were all one flex-wrap row, so when Breed didn't fit it
-   wrapped below the *tallest* item (the multi-row slider stack), leaving a
-   large empty gap between the sliders and a Breed button stranded well below
-   them. Splitting the tall sliderStack from the compact mode/denoise/Breed
-   controls means the latter only wrap against their own (short) height. */
-.breed-controls-top { display: flex; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+/* Count used to get its own wrapping row beside the slider stack
+   (.breed-controls-top), but at any form width narrow enough for the
+   sliders to need their own line -- i.e. almost always, since a single
+   slider-row alone is nearly as wide as the whole form -- that row never
+   had anywhere for Count to actually sit beside it, so it always wrapped
+   below anyway and just cost a whole extra line. Count is now the first
+   row of .mutation-sliders itself; only .breed-controls-bottom (mode
+   toggle/denoise/Breed, which really can share a line at most widths)
+   still needs to wrap as its own group. */
 .breed-controls-bottom { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .reroll-row { display: flex; align-items: center; gap: 8px; height: 31px; }
 .reroll-row input[type=range] { width: 120px; accent-color: var(--accent); }
@@ -524,6 +530,19 @@ button:disabled { opacity: 0.5; cursor: default; }
 .slider-row { display: flex; align-items: center; gap: 8px; height: 31px; }
 .slider-row .field-label { min-width: 130px; flex-shrink: 0; }
 .slider-row input[type=range] { width: 120px; accent-color: var(--accent); }
+.count-input { width: 60px; }
+
+/* replaces the old always-visible .corpus-warning paragraph block (~55px,
+   permanently there on any install with no corpus scanned yet) with a
+   small inline glyph on the Lora mutations row -- same explanation, via
+   `title`, only taking space when someone actually wants it. tabindex so
+   it's keyboard/screen-reader reachable too, not just hover-only. */
+.corpus-warning-icon {
+  color: #e0a355;
+  cursor: help;
+  font-size: 13px;
+  line-height: 1;
+}
 
 .mode-toggle { display: flex; border: 1px solid var(--border-light); border-radius: var(--radius-sm); overflow: hidden; }
 .mode-toggle button { border: none; border-radius: 0; background: transparent; color: var(--text-dim); }
