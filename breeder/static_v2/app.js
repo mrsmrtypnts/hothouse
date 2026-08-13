@@ -103,7 +103,7 @@ let lastDetailFocusId = null;
 // nodes that aren't even visible in a filtered view.
 document.addEventListener("keydown", (e) => {
   if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key)) return;
-  if (lightboxEl) return; // don't silently change focus while the lightbox is up
+  if (lightboxEl) return; // the lightbox's own keydown handler owns arrow keys while it's open
   const active = document.activeElement;
   if (active && ["INPUT", "TEXTAREA", "SELECT"].includes(active.tagName)) return;
 
@@ -416,20 +416,38 @@ function switchFormFocus(newFocusId, defaultMode = "txt2img", defaultDenoise = 0
   return changed;
 }
 
-// true while the full-viewport image lightbox is open -- arrow-key nav must
-// not silently change the underlying focused node while it's up (confusing
-// to close it and find yourself somewhere else), and Escape needs to close
-// it rather than whatever else Escape might otherwise do
+// true while the full-viewport image lightbox is open -- the *other* arrow-
+// key handler (thumbnail grid nav, further up) must not also act while this
+// is up, since this one takes over arrow keys for flipping between images
 let lightboxEl = null;
+// which node the lightbox is currently showing -- kept in sync with the URL
+// via history.replaceState on every flip (not a full navigate()/render(),
+// which would rebuild the whole detail-panel behind the lightbox on every
+// keystroke while rapidly flipping through images -- wasted work for
+// something purely cosmetic mid-flip). Reconciled with the real app state
+// once, when the lightbox actually closes -- compared against
+// lightboxOpenedFrom, NOT currentNodeId(), since replaceState already keeps
+// the latter in lockstep with this on every flip; comparing against it would
+// make the "did the selection actually change" check never fire, leaving
+// the panel behind the lightbox showing stale content forever after a flip.
+let lightboxNodeId = null;
+let lightboxOpenedFrom = null;
 
 function closeLightbox() {
   if (lightboxEl) {
     lightboxEl.remove();
     lightboxEl = null;
   }
+  if (lightboxNodeId && lightboxNodeId !== lightboxOpenedFrom) {
+    navigate(lightboxNodeId);
+  }
+  lightboxNodeId = null;
+  lightboxOpenedFrom = null;
 }
 
-function openLightbox(src) {
+function openLightbox(nodeId, src) {
+  lightboxNodeId = nodeId;
+  lightboxOpenedFrom = nodeId;
   const overlay = el("div", { class: "img-lightbox" });
   overlay.appendChild(el("img", { src, alt: "full size" }));
   const closeBtn = el("button", { class: "img-lightbox-close", text: "×" });
@@ -445,8 +463,39 @@ function openLightbox(src) {
   lightboxEl = overlay;
 }
 
+// steps to the next/previous *viewable* (status "done") thumbnail in the
+// same order the grid shows them, skipping over pending/error ones -- the
+// lightbox only ever shows a real image, never a placeholder
+function moveLightbox(delta) {
+  const cards = Array.from(document.querySelectorAll(".thumb-card"));
+  if (!cards.length) return;
+  const ids = cards.map((c) => new URLSearchParams(c.getAttribute("href").slice(1)).get("n"));
+  let idx = ids.indexOf(lightboxNodeId);
+  if (idx === -1) return;
+  for (let tries = 0; tries < ids.length; tries++) {
+    idx += delta;
+    if (idx < 0 || idx >= ids.length) return;
+    const img = cards[idx].querySelector("img");
+    if (img) {
+      lightboxNodeId = ids[idx];
+      history.replaceState({}, "", `?n=${lightboxNodeId}`);
+      lightboxEl.querySelector("img").src = img.src;
+      return;
+    }
+  }
+}
+
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && lightboxEl) closeLightbox();
+  if (!lightboxEl) return;
+  if (e.key === "Escape") {
+    closeLightbox();
+  } else if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+    e.preventDefault();
+    moveLightbox(1);
+  } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+    e.preventDefault();
+    moveLightbox(-1);
+  }
 });
 
 let hoverEl = null;
@@ -1913,7 +1962,7 @@ async function buildDetailPanel(focusId, knownModels) {
   const imageBox = el("div", { class: "detail-image" });
   if (node.status === "done") {
     const focusedImg = el("img", { src: `/images/${node.image_file}`, alt: "focused" });
-    focusedImg.addEventListener("click", () => openLightbox(focusedImg.src));
+    focusedImg.addEventListener("click", () => openLightbox(node.id, focusedImg.src));
     imageBox.appendChild(focusedImg);
   } else if (node.status === "error") {
     const errBox = el("div", { class: "placeholder error-placeholder" });
