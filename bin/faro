@@ -1,0 +1,220 @@
+#!/usr/bin/env bash
+
+set -e
+
+# ---------------------------------------------------------------------------
+# faro — perfect (out) shuffle a video's timeline
+#
+# Slices the input into N equal-length segments, then riffles them together
+# the way a faro shuffle riffles a deck: split into two equal halves and
+# interleave them, first half card leading each pair.
+#
+#   N=8, segments labeled A B C D E F G H
+#   half 1: A B C D     half 2: E F G H
+#   result: A E B F C G D H
+#
+# Usage:
+#   faro <N> [input.mp4] [-o|--output PATH]
+#   ffmpeg-producing-command | faro <N>
+#   faro <N> < input.mp4
+#
+#   N must be one of: 4, 8, 16, 32, 64, 128  (i.e. 2^n for n=2..7)
+#
+# If no input file is given, input is read from stdin (or pass "-"
+# explicitly). If no --output is given: a named input file gets a sibling
+# output file named "<input> faro<N>.<ext>"; stdin input streams the result
+# to stdout (as Matroska) so it can feed straight into the next pipeline
+# stage. Pass -o - to force streaming to stdout even with a named input.
+# ---------------------------------------------------------------------------
+
+usage() {
+  echo "Usage: $0 <4|8|16|32|64|128> [input.mp4] [-o|--output PATH]" >&2
+  echo "       ... | $0 <4|8|16|32|64|128>   (reads video from stdin)" >&2
+}
+
+SEGMENTS=""
+INPUT_ARG=""
+OUTPUT_OVERRIDE=""
+POSITIONALS=()
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -o|--output)
+      OUTPUT_OVERRIDE="$2"
+      shift 2
+      ;;
+    --output=*)
+      OUTPUT_OVERRIDE="${1#*=}"
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    -*)
+      echo "Unknown option: $1" >&2
+      usage
+      exit 1
+      ;;
+    *)
+      POSITIONALS+=("$1")
+      shift
+      ;;
+  esac
+done
+
+SEGMENTS="${POSITIONALS[0]:-}"
+INPUT_ARG="${POSITIONALS[1]:-}"
+
+if [[ -z "$SEGMENTS" ]]; then
+  usage
+  exit 1
+fi
+
+case "$SEGMENTS" in
+  4|8|16|32|64|128) ;;
+  *)
+    echo "Error: segment count must be one of 4, 8, 16, 32, 64, 128 (got '$SEGMENTS')" >&2
+    exit 1
+    ;;
+esac
+
+if [[ ${#POSITIONALS[@]} -gt 2 ]]; then
+  echo "Error: too many arguments" >&2
+  usage
+  exit 1
+fi
+
+TMPDIR=$(mktemp -d)
+trap 'rm -rf "$TMPDIR"' EXIT
+
+# ---------------------------------------------------------------------------
+# Resolve input: named file, or buffer stdin to a temp file
+# ---------------------------------------------------------------------------
+READ_FROM_STDIN=0
+if [[ -z "$INPUT_ARG" || "$INPUT_ARG" == "-" ]]; then
+  if [[ -t 0 ]]; then
+    echo "Error: no input file given and stdin is a terminal, not a pipe" >&2
+    usage
+    exit 1
+  fi
+  READ_FROM_STDIN=1
+  INPUT_FILE="$TMPDIR/input"
+  cat > "$INPUT_FILE"
+else
+  if [[ ! -f "$INPUT_ARG" ]]; then
+    echo "Error: file not found: $INPUT_ARG" >&2
+    exit 1
+  fi
+  INPUT_FILE="$INPUT_ARG"
+fi
+
+# ---------------------------------------------------------------------------
+# Resolve output
+# ---------------------------------------------------------------------------
+TO_STDOUT=0
+if [[ -n "$OUTPUT_OVERRIDE" ]]; then
+  if [[ "$OUTPUT_OVERRIDE" == "-" ]]; then
+    TO_STDOUT=1
+  else
+    OUTPUT="$OUTPUT_OVERRIDE"
+  fi
+elif [[ "$READ_FROM_STDIN" -eq 1 ]]; then
+  TO_STDOUT=1
+else
+  BASENAME="${INPUT_ARG%.*}"
+  EXT="${INPUT_ARG##*.}"
+
+  # Parse optional time suffix (e.g. "foo 0'30\".mp4" -> NAME="foo", TIME=" 0'30\"")
+  TIME_SUFFIX=""
+  NAME_WITHOUT_TIME="$BASENAME"
+  if [[ "$BASENAME" =~ ^(.*[[:space:]])([0-9]+"'"[0-9]+"\"")$ ]]; then
+    NAME_WITHOUT_TIME="${BASH_REMATCH[1]}"
+    NAME_WITHOUT_TIME="${NAME_WITHOUT_TIME%" "}"
+    TIME_SUFFIX=" ${BASH_REMATCH[2]}"
+  fi
+
+  OUTPUT="${NAME_WITHOUT_TIME} faro${SEGMENTS}${TIME_SUFFIX}.${EXT}"
+fi
+
+if [[ "$TO_STDOUT" -eq 1 && -t 1 ]]; then
+  echo "Error: output is stdout but stdout is a terminal — redirect it or pass -o PATH" >&2
+  exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# Probe
+# ---------------------------------------------------------------------------
+probe_duration()  { ffprobe -v quiet -show_entries format=duration -of csv=p=0 "$1"; }
+probe_has_audio() { ffprobe -v quiet -select_streams a:0 -show_entries stream=codec_type -of csv=p=0 "$1"; }
+
+DURATION=$(probe_duration "$INPUT_FILE")
+if [[ -z "$DURATION" ]]; then
+  echo "Error: could not determine duration of input" >&2
+  exit 1
+fi
+HAS_AUDIO=$(probe_has_audio "$INPUT_FILE")
+
+if [[ "$TO_STDOUT" -eq 0 ]]; then
+  echo "Input duration: ${DURATION}s | segments: $SEGMENTS | output: $OUTPUT" >&2
+else
+  echo "Input duration: ${DURATION}s | segments: $SEGMENTS | output: stdout" >&2
+fi
+
+# ---------------------------------------------------------------------------
+# Step 1: slice into N equal-length segments (re-encoded for frame-accurate
+# cuts and a consistent codec across pieces, so the final concat can stream
+# copy).
+# ---------------------------------------------------------------------------
+mkdir -p "$TMPDIR/segments"
+
+BOUNDARIES=$(python3 -c "
+d = $DURATION
+n = $SEGMENTS
+for i in range(n):
+    start = d * i / n
+    dur = d * (i + 1) / n - start
+    print(f'{start:.6f} {dur:.6f}')
+")
+
+readarray -t BOUNDARY_LINES <<< "$BOUNDARIES"
+
+echo "Splitting into $SEGMENTS segments..." >&2
+for i in "${!BOUNDARY_LINES[@]}"; do
+  read -r START DUR <<< "${BOUNDARY_LINES[$i]}"
+  SEG_FILE=$(printf '%s/segments/seg_%03d.mp4' "$TMPDIR" "$i")
+  printf '\r  segment %d/%d' "$((i + 1))" "$SEGMENTS" >&2
+
+  if [[ -n "$HAS_AUDIO" ]]; then
+    ffmpeg -nostdin -y -loglevel error -ss "$START" -i "$INPUT_FILE" -t "$DUR" \
+      -c:v libx264 -crf 18 -preset fast -c:a aac -avoid_negative_ts make_zero \
+      "$SEG_FILE"
+  else
+    ffmpeg -nostdin -y -loglevel error -ss "$START" -i "$INPUT_FILE" -t "$DUR" \
+      -c:v libx264 -crf 18 -preset fast -an -avoid_negative_ts make_zero \
+      "$SEG_FILE"
+  fi
+done
+echo >&2
+
+# ---------------------------------------------------------------------------
+# Step 2: compute the faro (perfect out-shuffle) order and concat
+# ---------------------------------------------------------------------------
+HALF=$((SEGMENTS / 2))
+CONCAT_LIST="$TMPDIR/concat.txt"
+> "$CONCAT_LIST"
+for ((k = 0; k < HALF; k++)); do
+  for IDX in "$k" "$((k + HALF))"; do
+    SEG_FILE=$(printf '%s/segments/seg_%03d.mp4' "$TMPDIR" "$IDX")
+    echo "file '${SEG_FILE}'" >> "$CONCAT_LIST"
+  done
+done
+
+echo "Shuffling and concatenating..." >&2
+
+if [[ "$TO_STDOUT" -eq 1 ]]; then
+  ffmpeg -nostdin -y -loglevel error -f concat -safe 0 -i "$CONCAT_LIST" -c copy -f matroska -
+else
+  ffmpeg -nostdin -y -loglevel error -f concat -safe 0 -i "$CONCAT_LIST" -c copy "$OUTPUT"
+  echo "Done: $OUTPUT" >&2
+fi
