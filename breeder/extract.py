@@ -1,49 +1,46 @@
 import io
 import re
+import sys
+from pathlib import Path
 
 from PIL import Image
 
-FIELD_PATTERNS = {
-    "steps": (r"Steps:\s*(\d+)", int),
-    "sampler_name": (r"Sampler:\s*([^,]+)", str),
-    "cfg_scale": (r"CFG scale:\s*([\d.]+)", float),
-    "seed": (r"Seed:\s*(-?\d+)", int),
-    "model_hash": (r"Model hash:\s*([^,]+)", str),
-    "model_name": (r"Model:\s*([^,]+)", str),
-    "clip_skip": (r"Clip skip:\s*(\d+)", int),
-    "denoising_strength": (r"Denoising strength:\s*([\d.]+)", float),
+# sdmeta.py lives at the repo root, shared with hoard's parser -- add it to
+# sys.path since breeder runs as flat scripts from within this directory
+# (`uvicorn server:app`), not as an installed package.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import sdmeta
+
+# Maps a Diffus API spec field to (raw metadata key name, cast function).
+_FIELD_MAP = {
+    "steps": ("Steps", int),
+    "sampler_name": ("Sampler", str),
+    "cfg_scale": ("CFG scale", float),
+    "seed": ("Seed", int),
+    "model_hash": ("Model hash", str),
+    "model_name": ("Model", str),
+    "clip_skip": ("Clip skip", int),
+    "denoising_strength": ("Denoising strength", float),
 }
 
-
-_SETTINGS_START_RE = re.compile(r"\n?\s*Steps:\s*\d+,\s*Sampler:")
-_NEGATIVE_PROMPT_RE = re.compile(r"\n?\s*Negative prompt:\s*")
+_SIZE_RE = re.compile(r"(\d+)\s*x\s*(\d+)")
 
 
 def parse_parameters_text(text: str) -> dict:
-    # Some tools omit the newline before the settings block and just comma-join
-    # everything on one line, so split on content (anchored on "Steps: N, Sampler:")
-    # rather than assuming the settings live on their own line.
-    settings_m = _SETTINGS_START_RE.search(text)
-    if settings_m:
-        head, settings_text = text[:settings_m.start()], text[settings_m.start():]
-    else:
-        head, settings_text = text, ""
+    parsed = sdmeta.parse(text)
+    params = parsed["params"]
+    spec = {"prompt": parsed["positive_prompt"], "negative_prompt": parsed["negative_prompt"]}
 
-    neg_m = _NEGATIVE_PROMPT_RE.search(head)
-    if neg_m:
-        prompt = head[:neg_m.start()].strip().rstrip(",").strip()
-        negative_prompt = head[neg_m.end():].strip().rstrip(",").strip()
-    else:
-        prompt = head.strip().rstrip(",").strip()
-        negative_prompt = ""
+    for field, (key, cast) in _FIELD_MAP.items():
+        raw = params.get(key)
+        if raw is None:
+            continue
+        try:
+            spec[field] = cast(raw)
+        except ValueError:
+            continue
 
-    spec = {"prompt": prompt, "negative_prompt": negative_prompt}
-    for key, (pattern, cast) in FIELD_PATTERNS.items():
-        m = re.search(pattern, settings_text)
-        if m:
-            spec[key] = cast(m.group(1).strip())
-
-    size_m = re.search(r"Size:\s*(\d+)x(\d+)", settings_text)
+    size_m = _SIZE_RE.match(params.get("Size", ""))
     if size_m:
         spec["width"] = int(size_m.group(1))
         spec["height"] = int(size_m.group(2))
