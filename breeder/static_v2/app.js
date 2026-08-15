@@ -500,17 +500,40 @@ function moveLightbox(delta) {
   content.appendChild(img ? el("img", { src: img.src, alt: "full size" }) : lightboxPlaceholder(card.dataset.status));
 }
 
+// handles both directions of the lightbox's Enter shortcut in one listener
+// -- opening and closing used to be two separate document-level keydown
+// listeners (open near the arrow-key thumbnail nav, close down here), which
+// broke the moment they both fired for the *same* keystroke: the open
+// handler would set lightboxEl and append the overlay, then this
+// (later-registered, so it also runs on that same event) handler would see
+// lightboxEl now truthy and immediately close what had just been opened,
+// net result nothing visibly happened. One handler, two branches, no
+// registration-order hazard.
 document.addEventListener("keydown", (e) => {
-  if (!lightboxEl) return;
-  if (e.key === "Escape") {
-    closeLightbox();
-  } else if (e.key === "ArrowRight" || e.key === "ArrowDown") {
-    e.preventDefault();
-    moveLightbox(1);
-  } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
-    e.preventDefault();
-    moveLightbox(-1);
+  if (lightboxEl) {
+    if (e.key === "Escape" || e.key === "Enter") {
+      closeLightbox();
+    } else if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+      e.preventDefault();
+      moveLightbox(1);
+    } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+      e.preventDefault();
+      moveLightbox(-1);
+    }
+    return;
   }
+  // lightbox not open -- bare Enter opens it on the currently-selected
+  // node, same as clicking the focused image. Not Cmd/Ctrl+Enter (that's
+  // the Breed shortcut) and not while actually focused on a real control
+  // (a form field, a button, a thumbnail link), where Enter should keep
+  // doing whatever it normally does there instead of being hijacked.
+  if (e.key !== "Enter" || e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
+  const active = document.activeElement;
+  if (active && ["INPUT", "TEXTAREA", "SELECT", "BUTTON", "A"].includes(active.tagName)) return;
+  const focusedImg = document.querySelector(".detail-image img");
+  if (!focusedImg) return; // nothing to show -- pending/error node, or nothing selected
+  e.preventDefault();
+  openLightbox(currentNodeId(), focusedImg.src);
 });
 
 let hoverEl = null;
