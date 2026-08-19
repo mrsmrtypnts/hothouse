@@ -15,25 +15,29 @@ set -e
 #
 # Usage:
 #   faro <N> [input.mp4] [-o|--output PATH]
+#   faro <N> <input1.mp4> <input2.mp4> [...] [-o|--output PATH]
 #   ffmpeg-producing-command | faro <N>
 #   faro <N> < input.mp4
 #
 #   N must be one of: 4, 8, 16, 32, 64, 128  (i.e. 2^n for n=2..7)
 #
 # If no input file is given, input is read from stdin (or pass "-"
-# explicitly). If no --output is given: a named input file gets a sibling
-# output file named "<input> faro<N>.<ext>"; stdin input streams the result
-# to stdout (as Matroska) so it can feed straight into the next pipeline
-# stage. Pass -o - to force streaming to stdout even with a named input.
+# explicitly). If multiple input files are given, they are concatenated
+# (normalizing resolution/fps/codec first if they don't already match)
+# into one video, and the faro shuffle is applied to that. If no --output
+# is given: a named input file gets a sibling output file named "<input>
+# faro<N>.<ext>" (multiple inputs are named after the first one); stdin
+# input streams the result to stdout (as Matroska) so it can feed straight
+# into the next pipeline stage. Pass -o - to force streaming to stdout even
+# with named input(s).
 # ---------------------------------------------------------------------------
 
 usage() {
-  echo "Usage: $0 <4|8|16|32|64|128> [input.mp4] [-o|--output PATH]" >&2
+  echo "Usage: $0 <4|8|16|32|64|128> [input1.mp4 [input2.mp4 ...]] [-o|--output PATH]" >&2
   echo "       ... | $0 <4|8|16|32|64|128>   (reads video from stdin)" >&2
 }
 
 SEGMENTS=""
-INPUT_ARG=""
 OUTPUT_OVERRIDE=""
 POSITIONALS=()
 
@@ -64,7 +68,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 SEGMENTS="${POSITIONALS[0]:-}"
-INPUT_ARG="${POSITIONALS[1]:-}"
+INPUT_ARGS=("${POSITIONALS[@]:1}")
 
 if [[ -z "$SEGMENTS" ]]; then
   usage
@@ -79,20 +83,26 @@ case "$SEGMENTS" in
     ;;
 esac
 
-if [[ ${#POSITIONALS[@]} -gt 2 ]]; then
-  echo "Error: too many arguments" >&2
-  usage
-  exit 1
-fi
-
 TMPDIR=$(mktemp -d)
 trap 'rm -rf "$TMPDIR"' EXIT
 
 # ---------------------------------------------------------------------------
-# Resolve input: named file, or buffer stdin to a temp file
+# Probe helpers
+# ---------------------------------------------------------------------------
+probe_duration()  { ffprobe -v quiet -show_entries format=duration -of csv=p=0 "$1"; }
+probe_has_audio() { ffprobe -v quiet -select_streams a:0 -show_entries stream=codec_type -of csv=p=0 "$1"; }
+probe_width()     { ffprobe -v quiet -select_streams v:0 -show_entries stream=width  -of csv=p=0 "$1"; }
+probe_height()    { ffprobe -v quiet -select_streams v:0 -show_entries stream=height -of csv=p=0 "$1"; }
+probe_fps()       { ffprobe -v quiet -select_streams v:0 -show_entries stream=r_frame_rate -of csv=p=0 "$1"; }
+probe_vcodec()    { ffprobe -v quiet -select_streams v:0 -show_entries stream=codec_name -of csv=p=0 "$1"; }
+
+# ---------------------------------------------------------------------------
+# Resolve input: named file(s), or buffer stdin to a temp file. Multiple
+# named files are concatenated into one first (normalizing resolution/fps/
+# codec across them if needed), and the faro shuffle is applied to that.
 # ---------------------------------------------------------------------------
 READ_FROM_STDIN=0
-if [[ -z "$INPUT_ARG" || "$INPUT_ARG" == "-" ]]; then
+if [[ ${#INPUT_ARGS[@]} -eq 0 || ( ${#INPUT_ARGS[@]} -eq 1 && "${INPUT_ARGS[0]}" == "-" ) ]]; then
   if [[ -t 0 ]]; then
     echo "Error: no input file given and stdin is a terminal, not a pipe" >&2
     usage
@@ -102,11 +112,112 @@ if [[ -z "$INPUT_ARG" || "$INPUT_ARG" == "-" ]]; then
   INPUT_FILE="$TMPDIR/input"
   cat > "$INPUT_FILE"
 else
-  if [[ ! -f "$INPUT_ARG" ]]; then
-    echo "Error: file not found: $INPUT_ARG" >&2
-    exit 1
+  for f in "${INPUT_ARGS[@]}"; do
+    if [[ "$f" == "-" ]]; then
+      echo "Error: cannot mix stdin ('-') with multiple input files" >&2
+      exit 1
+    fi
+    if [[ ! -f "$f" ]]; then
+      echo "Error: file not found: $f" >&2
+      exit 1
+    fi
+  done
+
+  if [[ ${#INPUT_ARGS[@]} -eq 1 ]]; then
+    INPUT_FILE="${INPUT_ARGS[0]}"
+  else
+    echo "Concatenating ${#INPUT_ARGS[@]} input files..." >&2
+
+    # Find the most common resolution among inputs; use it as the
+    # normalization target if inputs don't already match on resolution/
+    # fps/codec.
+    declare -A RES_COUNT
+    for f in "${INPUT_ARGS[@]}"; do
+      KEY="$(probe_width "$f")x$(probe_height "$f")"
+      RES_COUNT[$KEY]=$(( ${RES_COUNT[$KEY]:-0} + 1 ))
+    done
+    BEST_RES="" BEST_COUNT=0
+    for KEY in "${!RES_COUNT[@]}"; do
+      if [[ ${RES_COUNT[$KEY]} -gt $BEST_COUNT ]]; then
+        BEST_COUNT=${RES_COUNT[$KEY]}
+        BEST_RES=$KEY
+      fi
+    done
+    REF_W=$(( ${BEST_RES%x*} & ~1 ))
+    REF_H=$(( ${BEST_RES#*x} & ~1 ))
+    REF_FPS=$(probe_fps "${INPUT_ARGS[0]}")
+    REF_VC=$(probe_vcodec "${INPUT_ARGS[0]}")
+
+    NEED_REENCODE=0
+    for f in "${INPUT_ARGS[@]}"; do
+      [[ "$(probe_width "$f")" != "$REF_W" || "$(probe_height "$f")" != "$REF_H" ]] && NEED_REENCODE=1
+      [[ "$(probe_fps "$f")" != "$REF_FPS" ]] && NEED_REENCODE=1
+      [[ "$(probe_vcodec "$f")" != "$REF_VC" ]] && NEED_REENCODE=1
+    done
+
+    CONCAT_INPUTS=("${INPUT_ARGS[@]}")
+    if [[ $NEED_REENCODE -eq 1 ]]; then
+      echo "  inputs differ in resolution/fps/codec — normalizing to ${REF_W}x${REF_H}@${REF_FPS}..." >&2
+      NORMALIZED=()
+      for i in "${!INPUT_ARGS[@]}"; do
+        OUT_NORM="$TMPDIR/norm_${i}.mp4"
+        HAS_A=$(probe_has_audio "${INPUT_ARGS[$i]}")
+        if [[ -n "$HAS_A" ]]; then
+          AUDIO_MAPS=(-map 0:a:0 -c:a aac -ar 44100 -ac 2)
+        else
+          AUDIO_MAPS=()
+        fi
+        ffmpeg -nostdin -y -loglevel error -i "${INPUT_ARGS[$i]}" \
+          -map 0:v:0 "${AUDIO_MAPS[@]}" \
+          -vf "scale=${REF_W}:${REF_H}:force_original_aspect_ratio=increase,crop=${REF_W}:${REF_H},fps=${REF_FPS}" \
+          -c:v libx264 -crf 18 -preset fast \
+          "$OUT_NORM"
+        NORMALIZED+=("$OUT_NORM")
+      done
+      CONCAT_INPUTS=("${NORMALIZED[@]}")
+    fi
+
+    # If some (but not all) inputs have audio, pad the silent ones so the
+    # concat demuxer sees a consistent stream layout throughout.
+    ANY_AUDIO=0 ALL_AUDIO=1
+    for f in "${CONCAT_INPUTS[@]}"; do
+      if [[ -n "$(probe_has_audio "$f")" ]]; then ANY_AUDIO=1; else ALL_AUDIO=0; fi
+    done
+    if [[ $ANY_AUDIO -eq 1 && $ALL_AUDIO -eq 0 ]]; then
+      echo "  some inputs lack audio — padding with silence..." >&2
+      PADDED=()
+      for i in "${!CONCAT_INPUTS[@]}"; do
+        f="${CONCAT_INPUTS[$i]}"
+        if [[ -z "$(probe_has_audio "$f")" ]]; then
+          PADDED_OUT="$TMPDIR/padded_${i}.mp4"
+          DUR=$(probe_duration "$f")
+          ffmpeg -nostdin -y -loglevel error -i "$f" \
+            -f lavfi -i "anullsrc=sample_rate=44100:channel_layout=stereo,atrim=duration=${DUR}" \
+            -c:v copy -c:a aac \
+            "$PADDED_OUT"
+          PADDED+=("$PADDED_OUT")
+        else
+          PADDED+=("$f")
+        fi
+      done
+      CONCAT_INPUTS=("${PADDED[@]}")
+    fi
+
+    CONCAT_INPUTS_LIST="$TMPDIR/concat_inputs.txt"
+    > "$CONCAT_INPUTS_LIST"
+    for f in "${CONCAT_INPUTS[@]}"; do
+      REALPATH=$(realpath "$f")
+      ESCAPED="${REALPATH//\'/\'\\\'\'}"
+      echo "file '${ESCAPED}'" >> "$CONCAT_INPUTS_LIST"
+    done
+
+    INPUT_FILE="$TMPDIR/combined.mp4"
+    if [[ $ANY_AUDIO -eq 1 ]]; then
+      ffmpeg -nostdin -y -loglevel error -f concat -safe 0 -i "$CONCAT_INPUTS_LIST" -map 0:v:0 -map 0:a:0 -c copy "$INPUT_FILE"
+    else
+      ffmpeg -nostdin -y -loglevel error -f concat -safe 0 -i "$CONCAT_INPUTS_LIST" -map 0:v:0 -c copy "$INPUT_FILE"
+    fi
   fi
-  INPUT_FILE="$INPUT_ARG"
 fi
 
 # ---------------------------------------------------------------------------
@@ -122,8 +233,8 @@ if [[ -n "$OUTPUT_OVERRIDE" ]]; then
 elif [[ "$READ_FROM_STDIN" -eq 1 ]]; then
   TO_STDOUT=1
 else
-  BASENAME="${INPUT_ARG%.*}"
-  EXT="${INPUT_ARG##*.}"
+  BASENAME="${INPUT_ARGS[0]%.*}"
+  EXT="${INPUT_ARGS[0]##*.}"
 
   # Parse optional time suffix (e.g. "foo 0'30\".mp4" -> NAME="foo", TIME=" 0'30\"")
   TIME_SUFFIX=""
@@ -141,12 +252,6 @@ if [[ "$TO_STDOUT" -eq 1 && -t 1 ]]; then
   echo "Error: output is stdout but stdout is a terminal — redirect it or pass -o PATH" >&2
   exit 1
 fi
-
-# ---------------------------------------------------------------------------
-# Probe
-# ---------------------------------------------------------------------------
-probe_duration()  { ffprobe -v quiet -show_entries format=duration -of csv=p=0 "$1"; }
-probe_has_audio() { ffprobe -v quiet -select_streams a:0 -show_entries stream=codec_type -of csv=p=0 "$1"; }
 
 DURATION=$(probe_duration "$INPUT_FILE")
 if [[ -z "$DURATION" ]]; then
