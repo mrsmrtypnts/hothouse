@@ -1,0 +1,211 @@
+#!/usr/bin/env bash
+
+set -e
+
+# ---------------------------------------------------------------------------
+# duopanel — remix a (typically portrait) video into a 16:9 composite: the
+# input shown in full at its original resolution on the right, and a
+# same-source crop scaled to match on the left.
+#
+#   right panel: the input, verbatim, at its original W x H — no crop, no
+#                scale.
+#   left panel:  whatever width is needed to bring the total composite up
+#                to 16:9, at height H. Derived by taking the largest crop
+#                of the input whose aspect ratio equals (left_width : H),
+#                then scaling that crop up (or down) to exactly
+#                left_width x H.
+#
+# Geometry: given input W x H,
+#   out_w      = nearest-even to 16*H/9
+#   left_w     = out_w - W
+#   crop ar    = left_w / H
+# The crop is width-constrained (uses the full input width, trims height)
+# or height-constrained (uses the full input height, trims width)
+# depending on how ar compares to the input's own aspect ratio W/H — same
+# "largest crop of a target aspect ratio" logic either way.
+#
+# This only works when the input is narrower than 16:9 (W/H < 16/9) —
+# otherwise there's no room left for a left panel. Portrait input always
+# qualifies; so does square or moderately-wide landscape input.
+#
+# By default the crop is centered. It can be repositioned along its axis
+# of slack via a 0.0-1.0 fraction: 0 = left/top edge, 0.5 = centered
+# (default), 1 = right/bottom edge. Whichever of --crop-x/--crop-y has no
+# slack to act on (because that axis is already using the full input
+# dimension) is accepted but has no effect.
+#
+# Usage:
+#   duopanel [options] <input.mp4>
+#
+# Options:
+#   --crop-x FRAC     Horizontal position of the crop, 0.0-1.0 (default 0.5)
+#   --crop-y FRAC     Vertical position of the crop, 0.0-1.0 (default 0.5)
+#   -o, --output PATH Output file path (default: "<input> duopanel.<ext>")
+#   -h, --help
+# ---------------------------------------------------------------------------
+
+usage() {
+  echo "Usage: $0 [options] <input.mp4>" >&2
+  echo "" >&2
+  echo "Options:" >&2
+  echo "  --crop-x FRAC     Horizontal position of the crop, 0.0-1.0 (default 0.5)" >&2
+  echo "  --crop-y FRAC     Vertical position of the crop, 0.0-1.0 (default 0.5)" >&2
+  echo "  -o, --output PATH Output file path (default: \"<input> duopanel.<ext>\")" >&2
+}
+
+CROP_X=0.5
+CROP_Y=0.5
+OUTPUT_OVERRIDE=""
+POSITIONALS=()
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --crop-x)  CROP_X="$2";  shift 2 ;;
+    --crop-x=*)  CROP_X="${1#*=}";  shift ;;
+    --crop-y)  CROP_Y="$2";  shift 2 ;;
+    --crop-y=*)  CROP_Y="${1#*=}";  shift ;;
+    -o|--output) OUTPUT_OVERRIDE="$2"; shift 2 ;;
+    --output=*)  OUTPUT_OVERRIDE="${1#*=}"; shift ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    -*)
+      echo "Unknown option: $1" >&2
+      usage
+      exit 1
+      ;;
+    *)
+      POSITIONALS+=("$1")
+      shift
+      ;;
+  esac
+done
+
+if [[ ${#POSITIONALS[@]} -ne 1 ]]; then
+  usage
+  exit 1
+fi
+
+INPUT="${POSITIONALS[0]}"
+if [[ ! -f "$INPUT" ]]; then
+  echo "Error: file not found: $INPUT" >&2
+  exit 1
+fi
+
+for name in CROP_X CROP_Y; do
+  val="${!name}"
+  if ! python3 -c "
+v = float('$val')
+import sys
+sys.exit(0 if 0.0 <= v <= 1.0 else 1)
+" 2>/dev/null; then
+    echo "Error: --${name,,} must be a number between 0.0 and 1.0 (got '$val')" >&2
+    exit 1
+  fi
+done
+
+# ---------------------------------------------------------------------------
+# Output filename construction (mirrors faro/panels convention: insert the
+# suffix before a trailing time-code like "1'35\"", if present)
+# ---------------------------------------------------------------------------
+if [[ -n "$OUTPUT_OVERRIDE" ]]; then
+  OUTPUT="$OUTPUT_OVERRIDE"
+else
+  BASENAME="${INPUT%.*}"
+  EXT="${INPUT##*.}"
+
+  TIME_SUFFIX=""
+  NAME_WITHOUT_TIME="$BASENAME"
+  if [[ "$BASENAME" =~ ^(.*[[:space:]])([0-9]+"'"[0-9]+"\"")$ ]]; then
+    NAME_WITHOUT_TIME="${BASH_REMATCH[1]}"
+    NAME_WITHOUT_TIME="${NAME_WITHOUT_TIME%" "}"
+    TIME_SUFFIX=" ${BASH_REMATCH[2]}"
+  fi
+
+  OUTPUT="${NAME_WITHOUT_TIME} duopanel${TIME_SUFFIX}.${EXT}"
+fi
+
+# ---------------------------------------------------------------------------
+# Probe
+# ---------------------------------------------------------------------------
+probe_width()     { ffprobe -v quiet -select_streams v:0 -show_entries stream=width  -of csv=p=0 "$1"; }
+probe_height()    { ffprobe -v quiet -select_streams v:0 -show_entries stream=height -of csv=p=0 "$1"; }
+probe_has_audio() { ffprobe -v quiet -select_streams a:0 -show_entries stream=codec_type -of csv=p=0 "$1"; }
+
+WIDTH=$(probe_width "$INPUT")
+HEIGHT=$(probe_height "$INPUT")
+if [[ -z "$WIDTH" || -z "$HEIGHT" ]]; then
+  echo "Error: could not determine dimensions of input" >&2
+  exit 1
+fi
+HAS_AUDIO=$(probe_has_audio "$INPUT")
+
+if [[ $((9 * WIDTH)) -ge $((16 * HEIGHT)) ]]; then
+  echo "Error: input is ${WIDTH}x${HEIGHT} (aspect ratio >= 16:9) — no room for a left panel" >&2
+  exit 1
+fi
+if [[ $((HEIGHT % 2)) -ne 0 ]]; then
+  echo "Error: input height (${HEIGHT}) is odd — can't preserve it exactly for the right panel" >&2
+  exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# Geometry
+# ---------------------------------------------------------------------------
+read -r OUT_W LEFT_W CROP_W CROP_H <<< "$(python3 -c "
+w, h = $WIDTH, $HEIGHT
+
+out_w = round((16 * h / 9) / 2) * 2
+left_w = out_w - w
+if left_w < 2:
+    raise SystemExit('Error: no room for a left panel at this input size')
+
+ar = left_w / h  # target aspect ratio (width:height) for the crop
+
+if ar > w / h:
+    # width-constrained: use the full input width, trim height
+    crop_w = w
+    crop_h = round((w / ar) / 2) * 2
+    crop_h = max(2, crop_h)
+else:
+    # height-constrained: use the full input height, trim width
+    crop_h = h
+    crop_w = round((ar * h) / 2) * 2
+    crop_w = max(2, min(crop_w, w))
+
+print(out_w, left_w, crop_w, crop_h)
+")"
+
+read -r CROP_POS_X CROP_POS_Y <<< "$(python3 -c "
+w, h, crop_w, crop_h = $WIDTH, $HEIGHT, $CROP_W, $CROP_H
+def off(total, crop, frac):
+    slack = total - crop
+    return max(0, min(slack, round(slack * frac)))
+print(off(w, crop_w, $CROP_X), off(h, crop_h, $CROP_Y))
+")"
+
+echo "Input: ${WIDTH}x${HEIGHT} | crop: ${CROP_W}x${CROP_H}+${CROP_POS_X}+${CROP_POS_Y} scaled to ${LEFT_W}x${HEIGHT} | right: ${WIDTH}x${HEIGHT} (verbatim) | output: ${OUT_W}x${HEIGHT}"
+echo "Output will be: $OUTPUT"
+
+# ---------------------------------------------------------------------------
+# Crop + scale (left) + hstack with the untouched original (right)
+# ---------------------------------------------------------------------------
+FILTER="[0:v]crop=${CROP_W}:${CROP_H}:${CROP_POS_X}:${CROP_POS_Y},scale=${LEFT_W}:${HEIGHT}:flags=lanczos[left];[left][0:v]hstack=inputs=2[v]"
+
+if [[ -n "$HAS_AUDIO" ]]; then
+  ffmpeg -y -i "$INPUT" \
+    -filter_complex "$FILTER" \
+    -map "[v]" -map 0:a:0 \
+    -c:v libx264 -crf 18 -preset fast \
+    -c:a copy \
+    "$OUTPUT"
+else
+  ffmpeg -y -i "$INPUT" \
+    -filter_complex "$FILTER" \
+    -map "[v]" \
+    -c:v libx264 -crf 18 -preset fast \
+    "$OUTPUT"
+fi
+
+echo "Done: $OUTPUT"
