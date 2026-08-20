@@ -2,9 +2,17 @@
 
 set -e
 
+usage() {
+  echo "Usage: $0 <input.mp4>" >&2
+}
+
+case "$1" in
+  -h|--help) usage; exit 0 ;;
+esac
+
 INPUT="$1"
 if [[ -z "$INPUT" ]]; then
-  echo "Usage: $0 <input.mp4>"
+  usage
   exit 1
 fi
 

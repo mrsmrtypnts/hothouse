@@ -2,6 +2,10 @@
 
 set -e
 
+usage() {
+  echo "Usage: $0 [--audio reverse|forward|none] <input.mp4>" >&2
+}
+
 AUDIO_MODE=reverse
 INPUTS=()
 
@@ -15,8 +19,13 @@ while [[ $# -gt 0 ]]; do
       AUDIO_MODE="${1#*=}"
       shift
       ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
     -*)
       echo "Unknown option: $1" >&2
+      usage
       exit 1
       ;;
     *)
@@ -28,7 +37,7 @@ done
 
 INPUT="${INPUTS[0]}"
 if [[ -z "$INPUT" ]]; then
-  echo "Usage: $0 [--audio reverse|forward|none] <input.mp4>" >&2
+  usage
   exit 1
 fi
 

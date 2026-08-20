@@ -5,6 +5,14 @@
 # If message is omitted, a generic commit message is used.
 set -euo pipefail
 
+case "${1:-}" in
+  -h|--help)
+    echo "Usage: $0 [message]" >&2
+    echo "If message is omitted, a generic commit message is used." >&2
+    exit 0
+    ;;
+esac
+
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo"
 

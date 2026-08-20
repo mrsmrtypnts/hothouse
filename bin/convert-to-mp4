@@ -1,11 +1,16 @@
 #!/usr/bin/env bash
 
+usage() {
+  echo "Usage: $0 [--dry-run] [directory]" >&2
+}
+
 DRY_RUN=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dry-run) DRY_RUN=true; shift ;;
-    -*) echo "Unknown option: $1" >&2; exit 1 ;;
+    -h|--help) usage; exit 0 ;;
+    -*) echo "Unknown option: $1" >&2; usage; exit 1 ;;
     *) DIR="$1"; shift ;;
   esac
 done

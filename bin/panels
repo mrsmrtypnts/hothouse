@@ -21,6 +21,10 @@ set -e
 #   3-panel: A | B | C  — A=original, B=offset +1/3, C=offset +2/3
 # ---------------------------------------------------------------------------
 
+usage() {
+  echo "Usage: $0 [--panels 1|2|3] [--audio keep|all|none] <input1.mp4> [input2.mp4 ...]" >&2
+}
+
 PANELS=3
 AUDIO_MODE=keep
 INPUTS=()
@@ -44,8 +48,13 @@ while [[ $# -gt 0 ]]; do
       AUDIO_MODE="${1#*=}"
       shift
       ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
     -*)
       echo "Unknown option: $1" >&2
+      usage
       exit 1
       ;;
     *)
@@ -56,7 +65,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ ${#INPUTS[@]} -eq 0 ]]; then
-  echo "Usage: $0 [--panels 1|2|3] [--audio keep|all|none] <input1.mp4> [input2.mp4 ...]" >&2
+  usage
   exit 1
 fi
 
