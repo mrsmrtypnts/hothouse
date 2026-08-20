@@ -84,13 +84,10 @@ while IFS= read -r -d $'\0' FILE; do
     # $FILE already has a .mp4 extension, so $MP4 is the same path as $FILE --
     # the generic "$MP4 exists alongside" check below doesn't apply. Instead,
     # check whether the video codec is one that's mislabeled-valid but that
-    # iMovie can't actually open, and if so repair it in place.
-    if [[ -f "$CONVERTED_MP4" ]]; then
-      echo "SKIP (converted/ already holds an archived original for this file): $FILE"
-      COUNT_SKIPPED=$(( COUNT_SKIPPED + 1 ))
-      continue
-    fi
-
+    # iMovie can't actually open, and if so repair it in place. The broken
+    # original is archived to orig/, same as every other format this script
+    # handles -- the top-of-loop $ORIG_FILE check above already makes this
+    # idempotent on rerun.
     VCODEC="$(ffprobe -v error -select_streams v:0 -show_entries stream=codec_name -of csv=p=0 "$FILE" 2>/dev/null)"
 
     if [[ -z "$VCODEC" ]]; then
@@ -107,15 +104,15 @@ while IFS= read -r -d $'\0' FILE; do
     echo "REPAIRING (incompatible codec: $VCODEC): $FILE"
     if [[ "$DRY_RUN" == true ]]; then
       echo "  [dry-run] ffmpeg -i '$FILE' -c:v libx264 -crf 18 -preset fast -c:a aac '$MP4_TMP'"
-      do_mkdir "$PARENT/converted"
-      do_move "$FILE" "$CONVERTED_MP4"
+      do_mkdir "$PARENT/orig"
+      do_move "$FILE" "$ORIG_FILE"
       echo "  [dry-run] mv '$MP4_TMP' '$MP4'"
       COUNT_REPAIRED=$(( COUNT_REPAIRED + 1 ))
     else
       if ffmpeg -nostdin -y -loglevel error -i "$FILE" \
           -c:v libx264 -crf 18 -preset fast -c:a aac "$MP4_TMP"; then
-        do_mkdir "$PARENT/converted"
-        do_move "$FILE" "$CONVERTED_MP4"
+        do_mkdir "$PARENT/orig"
+        do_move "$FILE" "$ORIG_FILE"
         mv "$MP4_TMP" "$MP4"
         COUNT_REPAIRED=$(( COUNT_REPAIRED + 1 ))
       else
