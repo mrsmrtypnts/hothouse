@@ -10,10 +10,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ -z "$DIR" ]]; then
-  echo "Usage: $0 [--dry-run] <directory>" >&2
-  exit 1
-fi
+DIR="${DIR:-.}"
 
 if [[ ! -d "$DIR" ]]; then
   echo "Error: not a directory: $DIR" >&2
