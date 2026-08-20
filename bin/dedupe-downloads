@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+
+usage() {
+  echo "Usage: $0 [--dry-run] [directory ...]" >&2
+  echo "" >&2
+  echo "Recursively finds files named like 'foo (1).jpg' and removes them" >&2
+  echo "when a byte-identical 'foo.jpg' exists alongside." >&2
+}
+
+DRY_RUN=false
+DIRS=()
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --dry-run) DRY_RUN=true; shift ;;
+    -h|--help) usage; exit 0 ;;
+    -*) echo "Unknown option: $1" >&2; usage; exit 1 ;;
+    *) DIRS+=("$1"); shift ;;
+  esac
+done
+
+if [[ ${#DIRS[@]} -eq 0 ]]; then
+  DIRS=(".")
+fi
+
+for DIR in "${DIRS[@]}"; do
+  if [[ ! -d "$DIR" ]]; then
+    echo "Error: not a directory: $DIR" >&2
+    exit 1
+  fi
+done
+
+COUNT_REMOVED=0
+COUNT_KEPT_DIFFERENT=0
+COUNT_NO_ORIGINAL=0
+BYTES_RECLAIMED=0
+
+do_remove() {
+  if [[ "$DRY_RUN" == true ]]; then
+    echo "  [dry-run] rm '$1'"
+  else
+    rm -- "$1"
+  fi
+}
+
+while IFS= read -r -d $'\0' FILE; do
+  FILENAME="$(basename -- "$FILE")"
+  PARENT="$(dirname -- "$FILE")"
+
+  # Split into stem + extension (extension includes the leading dot, if any).
+  if [[ "$FILENAME" == *.* && "$FILENAME" != .* ]]; then
+    STEM="${FILENAME%.*}"
+    EXT=".${FILENAME##*.}"
+  else
+    STEM="$FILENAME"
+    EXT=""
+  fi
+
+  # Only interested in stems ending in " (N)" -- the browser/Finder
+  # duplicate-download suffix.
+  [[ "$STEM" =~ ^(.+)\ \([0-9]+\)$ ]] || continue
+  ORIG_STEM="${BASH_REMATCH[1]}"
+  ORIGINAL="$PARENT/${ORIG_STEM}${EXT}"
+
+  [[ -f "$ORIGINAL" ]] || { COUNT_NO_ORIGINAL=$(( COUNT_NO_ORIGINAL + 1 )); continue; }
+
+  if cmp -s -- "$FILE" "$ORIGINAL"; then
+    SIZE=$(stat -f%z -- "$FILE" 2>/dev/null || stat -c%s -- "$FILE")
+    echo "DUPE: $FILE  (identical to $ORIGINAL)"
+    do_remove "$FILE"
+    COUNT_REMOVED=$(( COUNT_REMOVED + 1 ))
+    BYTES_RECLAIMED=$(( BYTES_RECLAIMED + SIZE ))
+  else
+    echo "DIFFERS, keeping: $FILE"
+    COUNT_KEPT_DIFFERENT=$(( COUNT_KEPT_DIFFERENT + 1 ))
+  fi
+done < <(find "${DIRS[@]}" -type f -print0 | sort -z)
+
+human_size() {
+  awk -v b="$1" 'BEGIN {
+    if (b >= 1000000000) printf "%.1f GB", b/1000000000
+    else if (b >= 1000000) printf "%.1f MB", b/1000000
+    else printf "%.0f KB", b/1000
+  }'
+}
+
+TOTAL=$(( COUNT_REMOVED + COUNT_KEPT_DIFFERENT + COUNT_NO_ORIGINAL ))
+echo ""
+DRY_RUN_LABEL=""
+[[ "$DRY_RUN" == true ]] && DRY_RUN_LABEL="dry run, "
+echo "Summary (${DRY_RUN_LABEL}$TOTAL numbered file(s) examined):"
+printf "  %-45s %4d  (%s)\n" "Removed (identical original found):" "$COUNT_REMOVED" "$(human_size "$BYTES_RECLAIMED")"
+printf "  %-45s %4d\n" "Kept (differs from original):" "$COUNT_KEPT_DIFFERENT"
+printf "  %-45s %4d\n" "Skipped (no matching original):" "$COUNT_NO_ORIGINAL"
