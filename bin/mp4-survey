@@ -53,21 +53,41 @@ done < <(find "$DIR" -type f \
   -print0)
 
 # .mp4 files: "pending" means the video codec needs repairing (no sibling
-# check makes sense -- $FILE is its own sibling). ffprobe-per-file is the
-# bottleneck here, so run the checks across cores instead of one at a time.
+# check makes sense -- $FILE is its own sibling), OR ffprobe couldn't read a
+# codec at all (corrupt file, or no video stream) -- convert-to-mp4 treats
+# that as an error and leaves the file untouched forever, so it needs
+# attention just as much as a genuinely bad codec does. ffprobe-per-file is
+# the bottleneck here, so run the checks across cores instead of one at a
+# time, and report progress as they come back since this can take a while.
 JOBS="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)"
-while IFS= read -r PARENT; do
-  [[ -n "$PARENT" ]] || continue
-  PENDING["$PARENT"]=$(( ${PENDING["$PARENT"]:-0} + 1 ))
+MP4_COUNT="$(find "$DIR" -type f -not -path "*/orig/*" -not -path "*/converted/*" -iname "*.mp4" | wc -l | tr -d ' ')"
+if [[ "$MP4_COUNT" -gt 0 ]]; then
+  echo "Checking codecs of $MP4_COUNT .mp4 file(s) across $JOBS core(s)..." >&2
+fi
+CHECKED=0
+while IFS=$'\t' read -r STATUS PARENT; do
+  CHECKED=$(( CHECKED + 1 ))
+  if [[ $(( CHECKED % 25 )) -eq 0 || $CHECKED -eq "$MP4_COUNT" ]]; then
+    printf "  %d/%d checked\r" "$CHECKED" "$MP4_COUNT" >&2
+  fi
+  if [[ "$STATUS" == "BAD" ]]; then
+    PENDING["$PARENT"]=$(( ${PENDING["$PARENT"]:-0} + 1 ))
+  fi
 done < <(find "$DIR" -type f \
   -not -path "*/orig/*" \
   -not -path "*/converted/*" \
   -iname "*.mp4" -print0 | \
   xargs -0 -P "$JOBS" -n1 bash -c '
     codec="$(ffprobe -v error -select_streams v:0 -show_entries stream=codec_name -of csv=p=0 "$1" 2>/dev/null)"
-    is_bad_mp4_codec "$codec" && dirname -- "$1"
-    true
+    if [[ -z "$codec" ]] || is_bad_mp4_codec "$codec"; then
+      printf "BAD\t%s\n" "$(dirname -- "$1")"
+    else
+      printf "OK\t%s\n" "$(dirname -- "$1")"
+    fi
   ' _)
+if [[ "$MP4_COUNT" -gt 0 ]]; then
+  echo "" >&2
+fi
 
 # Count done files per directory (source files moved to orig/ by convert-to-mp4)
 while IFS= read -r -d $'\0' FILE; do
