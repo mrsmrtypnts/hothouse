@@ -31,25 +31,15 @@ is_bad_mp4_codec() {
     *) return 1 ;;
   esac
 }
+export -f is_bad_mp4_codec
 
-# Count pending files per directory (keep extension list in sync with convert-to-mp4)
+# Count pending files per directory (keep extension list in sync with convert-to-mp4).
+# Non-mp4 formats: "pending" means no sibling .mp4 exists yet -- cheap, sequential.
 while IFS= read -r -d $'\0' FILE; do
   PARENT="$(dirname "$FILE")"
-  case "${FILE##*.}" in
-    [Mm][Pp]4)
-      # $FILE is already .mp4 -- "pending" means its codec needs repairing,
-      # not "no sibling .mp4 exists" (that's always true of itself).
-      VCODEC="$(ffprobe -v error -select_streams v:0 -show_entries stream=codec_name -of csv=p=0 "$FILE" 2>/dev/null)"
-      if is_bad_mp4_codec "$VCODEC"; then
-        PENDING["$PARENT"]=$(( ${PENDING["$PARENT"]:-0} + 1 ))
-      fi
-      ;;
-    *)
-      if [[ ! -f "${FILE%.*}.mp4" ]]; then
-        PENDING["$PARENT"]=$(( ${PENDING["$PARENT"]:-0} + 1 ))
-      fi
-      ;;
-  esac
+  if [[ ! -f "${FILE%.*}.mp4" ]]; then
+    PENDING["$PARENT"]=$(( ${PENDING["$PARENT"]:-0} + 1 ))
+  fi
 done < <(find "$DIR" -type f \
   -not -path "*/orig/*" \
   -not -path "*/converted/*" \
@@ -57,9 +47,25 @@ done < <(find "$DIR" -type f \
      -o -iname "*.mkv"  -o -iname "*.wmv"  -o -iname "*.flv"  -o -iname "*.m4v" \
      -o -iname "*.3gp"  -o -iname "*.mts"  -o -iname "*.m2ts" -o -iname "*.ts" \
      -o -iname "*.webm" -o -iname "*.ogv"  -o -iname "*.vob" \
-     -o -iname "*.rm"   -o -iname "*.asf"  -o -iname "*.divx" -o -iname "*.qt" \
-     -o -iname "*.mp4" \) \
+     -o -iname "*.rm"   -o -iname "*.asf"  -o -iname "*.divx" -o -iname "*.qt" \) \
   -print0)
+
+# .mp4 files: "pending" means the video codec needs repairing (no sibling
+# check makes sense -- $FILE is its own sibling). ffprobe-per-file is the
+# bottleneck here, so run the checks across cores instead of one at a time.
+JOBS="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)"
+while IFS= read -r PARENT; do
+  [[ -n "$PARENT" ]] || continue
+  PENDING["$PARENT"]=$(( ${PENDING["$PARENT"]:-0} + 1 ))
+done < <(find "$DIR" -type f \
+  -not -path "*/orig/*" \
+  -not -path "*/converted/*" \
+  -iname "*.mp4" -print0 | \
+  xargs -0 -P "$JOBS" -n1 bash -c '
+    codec="$(ffprobe -v error -select_streams v:0 -show_entries stream=codec_name -of csv=p=0 "$1" 2>/dev/null)"
+    is_bad_mp4_codec "$codec" && dirname -- "$1"
+    true
+  ' _)
 
 # Count done files per directory (source files moved to orig/ by convert-to-mp4)
 while IFS= read -r -d $'\0' FILE; do
