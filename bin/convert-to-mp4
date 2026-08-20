@@ -24,8 +24,21 @@ COUNT_ALREADY_DONE=0
 COUNT_MOVED_FROM_CONVERTED=0
 COUNT_REMUXED=0
 COUNT_CONVERTED=0
+COUNT_REPAIRED=0
+COUNT_MP4_OK=0
 COUNT_SKIPPED=0
 COUNT_ERRORS=0
+
+# Video codecs .mp4 files can carry that iMovie can't import, despite the
+# container itself being perfectly valid (e.g. AI-generated clips encoded as
+# AV1). ffprobe won't flag these as broken since nothing is actually wrong
+# with the file -- the codec is just unsupported downstream.
+is_bad_mp4_codec() {
+  case "$1" in
+    av1|vp9|vp8|mpeg2video) return 0 ;;
+    *) return 1 ;;
+  esac
+}
 
 do_mkdir() {
   if [[ "$DRY_RUN" == true ]]; then
@@ -56,13 +69,61 @@ while IFS= read -r -d $'\0' FILE; do
   ORIG_FILE="$PARENT/orig/$FILENAME"
 
   case "${FILENAME##*.}" in
-    [Mm]4[Vv]) IS_M4V=true ;;
-    *) IS_M4V=false ;;
+    [Mm]4[Vv]) IS_M4V=true; IS_MP4=false ;;
+    [Mm][Pp]4) IS_M4V=false; IS_MP4=true ;;
+    *) IS_M4V=false; IS_MP4=false ;;
   esac
 
   if [[ -f "$ORIG_FILE" ]]; then
     echo "SKIP (already processed, found in orig/): $FILE"
     COUNT_SKIPPED=$(( COUNT_SKIPPED + 1 ))
+    continue
+  fi
+
+  if [[ "$IS_MP4" == true ]]; then
+    # $FILE already has a .mp4 extension, so $MP4 is the same path as $FILE --
+    # the generic "$MP4 exists alongside" check below doesn't apply. Instead,
+    # check whether the video codec is one that's mislabeled-valid but that
+    # iMovie can't actually open, and if so repair it in place.
+    if [[ -f "$CONVERTED_MP4" ]]; then
+      echo "SKIP (converted/ already holds an archived original for this file): $FILE"
+      COUNT_SKIPPED=$(( COUNT_SKIPPED + 1 ))
+      continue
+    fi
+
+    VCODEC="$(ffprobe -v error -select_streams v:0 -show_entries stream=codec_name -of csv=p=0 "$FILE" 2>/dev/null)"
+
+    if [[ -z "$VCODEC" ]]; then
+      echo "  WARNING: could not probe video codec, skipping: $FILE"
+      COUNT_ERRORS=$(( COUNT_ERRORS + 1 ))
+      continue
+    fi
+
+    if ! is_bad_mp4_codec "$VCODEC"; then
+      COUNT_MP4_OK=$(( COUNT_MP4_OK + 1 ))
+      continue
+    fi
+
+    echo "REPAIRING (incompatible codec: $VCODEC): $FILE"
+    if [[ "$DRY_RUN" == true ]]; then
+      echo "  [dry-run] ffmpeg -i '$FILE' -c:v libx264 -crf 18 -preset fast -c:a aac '$MP4_TMP'"
+      do_mkdir "$PARENT/converted"
+      do_move "$FILE" "$CONVERTED_MP4"
+      echo "  [dry-run] mv '$MP4_TMP' '$MP4'"
+      COUNT_REPAIRED=$(( COUNT_REPAIRED + 1 ))
+    else
+      if ffmpeg -nostdin -y -loglevel error -i "$FILE" \
+          -c:v libx264 -crf 18 -preset fast -c:a aac "$MP4_TMP"; then
+        do_mkdir "$PARENT/converted"
+        do_move "$FILE" "$CONVERTED_MP4"
+        mv "$MP4_TMP" "$MP4"
+        COUNT_REPAIRED=$(( COUNT_REPAIRED + 1 ))
+      else
+        rm -f "$MP4_TMP"
+        echo "  ERROR: repair failed for $FILE"
+        COUNT_ERRORS=$(( COUNT_ERRORS + 1 ))
+      fi
+    fi
     continue
   fi
 
@@ -151,17 +212,22 @@ done < <(find "$DIR" -type f \
      -o -iname "*.mkv" -o -iname "*.wmv" -o -iname "*.flv" -o -iname "*.m4v" \
      -o -iname "*.3gp" -o -iname "*.mts"  -o -iname "*.m2ts" -o -iname "*.ts" \
      -o -iname "*.webm" -o -iname "*.ogv"  -o -iname "*.vob" \
-     -o -iname "*.rm"  -o -iname "*.asf"  -o -iname "*.divx" -o -iname "*.qt" \) \
+     -o -iname "*.rm"  -o -iname "*.asf"  -o -iname "*.divx" -o -iname "*.qt" \
+     -o -iname "*.mp4" \) \
   -print0 | sort -z)
 
-TOTAL=$(( COUNT_ALREADY_DONE + COUNT_MOVED_FROM_CONVERTED + COUNT_REMUXED + COUNT_CONVERTED + COUNT_SKIPPED + COUNT_ERRORS ))
+TOTAL=$(( COUNT_ALREADY_DONE + COUNT_MOVED_FROM_CONVERTED + COUNT_REMUXED + COUNT_CONVERTED + COUNT_REPAIRED + COUNT_MP4_OK + COUNT_SKIPPED + COUNT_ERRORS ))
 
 echo ""
-echo "Summary (${DRY_RUN:+dry run, }$TOTAL files):"
+DRY_RUN_LABEL=""
+[[ "$DRY_RUN" == true ]] && DRY_RUN_LABEL="dry run, "
+echo "Summary (${DRY_RUN_LABEL}$TOTAL files):"
 printf "  %-37s %4d\n" "Already converted (mp4 alongside):" "$COUNT_ALREADY_DONE"
 printf "  %-37s %4d\n" "Moved from converted/ subdir:" "$COUNT_MOVED_FROM_CONVERTED"
 printf "  %-37s %4d\n" "Remuxed (m4v -> mp4):" "$COUNT_REMUXED"
 printf "  %-37s %4d\n" "Newly converted:" "$COUNT_CONVERTED"
+printf "  %-37s %4d\n" "Repaired (bad codec in .mp4):" "$COUNT_REPAIRED"
+printf "  %-37s %4d\n" "Already fine .mp4 (left alone):" "$COUNT_MP4_OK"
 printf "  %-37s %4d\n" "Skipped (already in orig/):" "$COUNT_SKIPPED"
 if [[ $COUNT_ERRORS -gt 0 ]]; then
   printf "  %-37s %4d\n" "Errors:" "$COUNT_ERRORS"
