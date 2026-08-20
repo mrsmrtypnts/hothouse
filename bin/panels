@@ -6,14 +6,14 @@ set -e
 # panels — create a 1-, 2-, or 3-panel round-canon video (16:9 output)
 #
 # Usage:
-#   panels [--panels 1|2|3] [--audio keep|all|none] <input1.mp4> [input2.mp4 ...]
+#   panels [--panels 1|2|3] [--audio all|none|N] <input1.mp4> [input2.mp4 ...]
 #
 # Options:
 #   --panels N        Number of panels: 1, 2, or 3 (default: 3)
-#   --audio MODE      Audio handling: keep (default), all, or none
-#                       keep — single track from panel A (the original)
+#   --audio MODE      Audio handling: all (default), none, or a panel number
 #                       all  — blend audio from all panels (amix)
 #                       none — strip all audio
+#                       N    — single track from panel N (1, 2, or 3)
 #
 # Panel layout:
 #   1-panel: A          — original, cropped to 16:9
@@ -22,11 +22,11 @@ set -e
 # ---------------------------------------------------------------------------
 
 usage() {
-  echo "Usage: $0 [--panels 1|2|3] [--audio keep|all|none] <input1.mp4> [input2.mp4 ...]" >&2
+  echo "Usage: $0 [--panels 1|2|3] [--audio all|none|N] <input1.mp4> [input2.mp4 ...]" >&2
 }
 
 PANELS=3
-AUDIO_MODE=keep
+AUDIO_MODE=all
 INPUTS=()
 
 # Parse arguments
@@ -74,9 +74,11 @@ if [[ "$PANELS" != "1" && "$PANELS" != "2" && "$PANELS" != "3" ]]; then
   exit 1
 fi
 
-if [[ "$AUDIO_MODE" != "keep" && "$AUDIO_MODE" != "all" && "$AUDIO_MODE" != "none" ]]; then
-  echo "Error: --audio must be 'keep', 'all', or 'none'" >&2
-  exit 1
+if [[ "$AUDIO_MODE" != "all" && "$AUDIO_MODE" != "none" ]]; then
+  if ! [[ "$AUDIO_MODE" =~ ^[0-9]+$ ]] || [[ "$AUDIO_MODE" -lt 1 || "$AUDIO_MODE" -gt "$PANELS" ]]; then
+    echo "Error: --audio must be 'all', 'none', or a panel number (1-$PANELS)" >&2
+    exit 1
+  fi
 fi
 
 # ---------------------------------------------------------------------------
@@ -291,11 +293,11 @@ HAS_AUDIO=$(probe_has_audio "$SOURCE")
 
 # Resolve effective audio mode:
 #   none → no audio regardless
-#   keep/all → only possible if source actually has audio; fall back to none if not
+#   all/N → only possible if source actually has audio; fall back to none if not
 if [[ "$AUDIO_MODE" == "none" || -z "$HAS_AUDIO" ]]; then
   EFF_AUDIO=none
 else
-  EFF_AUDIO="$AUDIO_MODE"   # keep or all
+  EFF_AUDIO="$AUDIO_MODE"   # all or a panel number
 fi
 
 # ---------------------------------------------------------------------------
@@ -323,7 +325,7 @@ if [[ "$PANELS" -eq 1 ]]; then
       -an \
       "$OUTPUT"
   else
-    # keep and all are identical for 1-panel (only one track)
+    # all and panel-1 are identical for 1-panel (only one track)
     ffmpeg -y -i "$CROPPED" \
       -c:v libx264 -crf 18 -preset fast \
       -c:a aac \
@@ -356,18 +358,20 @@ elif [[ "$PANELS" -eq 2 ]]; then
       -c:v libx264 -crf 18 -preset fast \
       -c:a aac \
       "$OUTPUT"
-  elif [[ "$EFF_AUDIO" == "keep" ]]; then
-    ffmpeg -y -i "$A" -i "$B" \
-      -filter_complex "[0:v][1:v]hstack=inputs=2[v]" \
-      -map "[v]" -map "0:a" \
-      -c:v libx264 -crf 18 -preset fast \
-      -c:a aac \
-      "$OUTPUT"
-  else
+  elif [[ "$EFF_AUDIO" == "none" ]]; then
     ffmpeg -y -i "$A" -i "$B" \
       -filter_complex "[0:v][1:v]hstack=inputs=2[v]" \
       -map "[v]" \
       -c:v libx264 -crf 18 -preset fast \
+      "$OUTPUT"
+  else
+    # EFF_AUDIO is a panel number (1 or 2) → input index EFF_AUDIO-1
+    IDX=$(( EFF_AUDIO - 1 ))
+    ffmpeg -y -i "$A" -i "$B" \
+      -filter_complex "[0:v][1:v]hstack=inputs=2[v]" \
+      -map "[v]" -map "${IDX}:a" \
+      -c:v libx264 -crf 18 -preset fast \
+      -c:a aac \
       "$OUTPUT"
   fi
 
@@ -408,18 +412,20 @@ else
       -c:v libx264 -crf 18 -preset fast \
       -c:a aac \
       "$OUTPUT"
-  elif [[ "$EFF_AUDIO" == "keep" ]]; then
-    ffmpeg -y -i "$A" -i "$B" -i "$C" \
-      -filter_complex "[0:v][1:v][2:v]hstack=inputs=3[v]" \
-      -map "[v]" -map "0:a" \
-      -c:v libx264 -crf 18 -preset fast \
-      -c:a aac \
-      "$OUTPUT"
-  else
+  elif [[ "$EFF_AUDIO" == "none" ]]; then
     ffmpeg -y -i "$A" -i "$B" -i "$C" \
       -filter_complex "[0:v][1:v][2:v]hstack=inputs=3[v]" \
       -map "[v]" \
       -c:v libx264 -crf 18 -preset fast \
+      "$OUTPUT"
+  else
+    # EFF_AUDIO is a panel number (1, 2, or 3) → input index EFF_AUDIO-1
+    IDX=$(( EFF_AUDIO - 1 ))
+    ffmpeg -y -i "$A" -i "$B" -i "$C" \
+      -filter_complex "[0:v][1:v][2:v]hstack=inputs=3[v]" \
+      -map "[v]" -map "${IDX}:a" \
+      -c:v libx264 -crf 18 -preset fast \
+      -c:a aac \
       "$OUTPUT"
   fi
 fi
