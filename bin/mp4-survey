@@ -23,12 +23,33 @@ fi
 declare -A PENDING
 declare -A DONE
 
+# Video codecs .mp4 files can carry that iMovie can't import (keep in sync
+# with convert-to-mp4's is_bad_mp4_codec).
+is_bad_mp4_codec() {
+  case "$1" in
+    av1|vp9|vp8|mpeg2video) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 # Count pending files per directory (keep extension list in sync with convert-to-mp4)
 while IFS= read -r -d $'\0' FILE; do
   PARENT="$(dirname "$FILE")"
-  if [[ ! -f "${FILE%.*}.mp4" ]]; then
-    PENDING["$PARENT"]=$(( ${PENDING["$PARENT"]:-0} + 1 ))
-  fi
+  case "${FILE##*.}" in
+    [Mm][Pp]4)
+      # $FILE is already .mp4 -- "pending" means its codec needs repairing,
+      # not "no sibling .mp4 exists" (that's always true of itself).
+      VCODEC="$(ffprobe -v error -select_streams v:0 -show_entries stream=codec_name -of csv=p=0 "$FILE" 2>/dev/null)"
+      if is_bad_mp4_codec "$VCODEC"; then
+        PENDING["$PARENT"]=$(( ${PENDING["$PARENT"]:-0} + 1 ))
+      fi
+      ;;
+    *)
+      if [[ ! -f "${FILE%.*}.mp4" ]]; then
+        PENDING["$PARENT"]=$(( ${PENDING["$PARENT"]:-0} + 1 ))
+      fi
+      ;;
+  esac
 done < <(find "$DIR" -type f \
   -not -path "*/orig/*" \
   -not -path "*/converted/*" \
@@ -36,7 +57,8 @@ done < <(find "$DIR" -type f \
      -o -iname "*.mkv"  -o -iname "*.wmv"  -o -iname "*.flv"  -o -iname "*.m4v" \
      -o -iname "*.3gp"  -o -iname "*.mts"  -o -iname "*.m2ts" -o -iname "*.ts" \
      -o -iname "*.webm" -o -iname "*.ogv"  -o -iname "*.vob" \
-     -o -iname "*.rm"   -o -iname "*.asf"  -o -iname "*.divx" -o -iname "*.qt" \) \
+     -o -iname "*.rm"   -o -iname "*.asf"  -o -iname "*.divx" -o -iname "*.qt" \
+     -o -iname "*.mp4" \) \
   -print0)
 
 # Count done files per directory (source files moved to orig/ by convert-to-mp4)
@@ -49,7 +71,8 @@ done < <(find "$DIR" -type f \
      -o -iname "*.mkv"  -o -iname "*.wmv"  -o -iname "*.flv"  -o -iname "*.m4v" \
      -o -iname "*.3gp"  -o -iname "*.mts"  -o -iname "*.m2ts" -o -iname "*.ts" \
      -o -iname "*.webm" -o -iname "*.ogv"  -o -iname "*.vob" \
-     -o -iname "*.rm"   -o -iname "*.asf"  -o -iname "*.divx" -o -iname "*.qt" \) \
+     -o -iname "*.rm"   -o -iname "*.asf"  -o -iname "*.divx" -o -iname "*.qt" \
+     -o -iname "*.mp4" \) \
   -print0)
 
 if [[ ${#PENDING[@]} -eq 0 ]]; then
