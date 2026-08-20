@@ -23,7 +23,6 @@ if [[ ! -d "$DIR" ]]; then
 fi
 
 COUNT_ALREADY_DONE=0
-COUNT_MOVED_FROM_CONVERTED=0
 COUNT_REMUXED=0
 COUNT_CONVERTED=0
 COUNT_REPAIRED=0
@@ -68,7 +67,6 @@ while IFS= read -r -d $'\0' FILE; do
   MP4="$PARENT/$BASE.mp4"
   MP4_TMP="$PARENT/$BASE.tmp.mp4"
   M4V="$PARENT/$BASE.m4v"
-  CONVERTED_MP4="$PARENT/converted/$BASE.mp4"
   ORIG_FILE="$PARENT/orig/$FILENAME"
 
   case "${FILENAME##*.}" in
@@ -177,13 +175,6 @@ while IFS= read -r -d $'\0' FILE; do
       fi
     fi
 
-  elif [[ -f "$CONVERTED_MP4" ]]; then
-    echo "FOUND (mp4 in converted/ subdir): $FILE"
-    do_mkdir "$PARENT/orig"
-    do_move "$CONVERTED_MP4" "$MP4"
-    do_move "$FILE" "$ORIG_FILE"
-    COUNT_MOVED_FROM_CONVERTED=$(( COUNT_MOVED_FROM_CONVERTED + 1 ))
-
   elif [[ "$IS_WEBM" == true ]] \
       && WEBM_MIME="$(file --mime-type -b "$FILE" 2>/dev/null)" \
       && [[ "$WEBM_MIME" == "video/mp4" || "$WEBM_MIME" == "audio/mp4" ]]; then
@@ -233,7 +224,6 @@ while IFS= read -r -d $'\0' FILE; do
 
 done < <(find "$DIR" -type f \
   -not -path "*/orig/*" \
-  -not -path "*/converted/*" \
   \( -iname "*.mpg" -o -iname "*.mpeg" -o -iname "*.avi" -o -iname "*.mov" \
      -o -iname "*.mkv" -o -iname "*.wmv" -o -iname "*.flv" -o -iname "*.m4v" \
      -o -iname "*.3gp" -o -iname "*.mts"  -o -iname "*.m2ts" -o -iname "*.ts" \
@@ -242,14 +232,13 @@ done < <(find "$DIR" -type f \
      -o -iname "*.mp4" \) \
   -print0 | sort -z)
 
-TOTAL=$(( COUNT_ALREADY_DONE + COUNT_MOVED_FROM_CONVERTED + COUNT_REMUXED + COUNT_CONVERTED + COUNT_REPAIRED + COUNT_MP4_OK + COUNT_RELABELED + COUNT_SKIPPED + COUNT_ERRORS ))
+TOTAL=$(( COUNT_ALREADY_DONE + COUNT_REMUXED + COUNT_CONVERTED + COUNT_REPAIRED + COUNT_MP4_OK + COUNT_RELABELED + COUNT_SKIPPED + COUNT_ERRORS ))
 
 echo ""
 DRY_RUN_LABEL=""
 [[ "$DRY_RUN" == true ]] && DRY_RUN_LABEL="dry run, "
 echo "Summary (${DRY_RUN_LABEL}$TOTAL files):"
 printf "  %-37s %4d\n" "Already converted (mp4 alongside):" "$COUNT_ALREADY_DONE"
-printf "  %-37s %4d\n" "Moved from converted/ subdir:" "$COUNT_MOVED_FROM_CONVERTED"
 printf "  %-37s %4d\n" "Remuxed (m4v -> mp4):" "$COUNT_REMUXED"
 printf "  %-37s %4d\n" "Newly converted:" "$COUNT_CONVERTED"
 printf "  %-37s %4d\n" "Repaired (bad codec in .mp4):" "$COUNT_REPAIRED"
