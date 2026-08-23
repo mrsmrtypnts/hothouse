@@ -25,6 +25,7 @@ fi
 declare -A PENDING
 declare -A PENDING_BYTES
 declare -A DONE
+declare -A DONE_BYTES
 
 # Video codecs .mp4 files can carry that iMovie can't import (keep in sync
 # with convert-to-mp4's is_bad_mp4_codec).
@@ -45,8 +46,25 @@ human_size() {
 
 # Count pending files (and their total size) per directory (keep extension
 # list in sync with convert-to-mp4). Non-mp4 formats: "pending" means no
-# sibling .mp4 exists yet -- cheap, sequential.
+# sibling .mp4 exists yet. Cheap per-file, but a full tree walk can still
+# take a while, so precount and report progress as files are scanned.
+SRC_COUNT="$(find "$DIR" -type f \
+  -not -path "*/orig/*" \
+  \( -iname "*.mpg"  -o -iname "*.mpeg" -o -iname "*.avi"  -o -iname "*.mov" \
+     -o -iname "*.mkv"  -o -iname "*.wmv"  -o -iname "*.flv"  -o -iname "*.m4v" \
+     -o -iname "*.3gp"  -o -iname "*.mts"  -o -iname "*.m2ts" -o -iname "*.ts" \
+     -o -iname "*.webm" -o -iname "*.ogv"  -o -iname "*.vob" \
+     -o -iname "*.rm"   -o -iname "*.asf"  -o -iname "*.divx" -o -iname "*.qt" \) \
+  | wc -l | tr -d ' ')"
+if [[ "$SRC_COUNT" -gt 0 ]]; then
+  echo "Scanning $SRC_COUNT source file(s)..." >&2
+fi
+SCANNED=0
 while IFS= read -r -d $'\0' FILE; do
+  SCANNED=$(( SCANNED + 1 ))
+  if [[ $(( SCANNED % 25 )) -eq 0 || $SCANNED -eq "$SRC_COUNT" ]]; then
+    printf "  %d/%d scanned\r" "$SCANNED" "$SRC_COUNT" >&2
+  fi
   PARENT="$(dirname "$FILE")"
   if [[ ! -f "${FILE%.*}.mp4" ]]; then
     PENDING["$PARENT"]=$(( ${PENDING["$PARENT"]:-0} + 1 ))
@@ -60,6 +78,9 @@ done < <(find "$DIR" -type f \
      -o -iname "*.webm" -o -iname "*.ogv"  -o -iname "*.vob" \
      -o -iname "*.rm"   -o -iname "*.asf"  -o -iname "*.divx" -o -iname "*.qt" \) \
   -print0)
+if [[ "$SRC_COUNT" -gt 0 ]]; then
+  echo "" >&2
+fi
 
 # .mp4 files: "pending" means the video codec needs repairing (no sibling
 # check makes sense -- $FILE is its own sibling), OR ffprobe couldn't read a
@@ -98,10 +119,12 @@ if [[ "$MP4_COUNT" -gt 0 ]]; then
   echo "" >&2
 fi
 
-# Count done files per directory (source files moved to orig/ by convert-to-mp4)
+# Count done files (and their total size) per directory (source files moved
+# to orig/ by convert-to-mp4)
 while IFS= read -r -d $'\0' FILE; do
   PARENT="$(dirname "$(dirname "$FILE")")"   # parent of the orig/ dir
   DONE["$PARENT"]=$(( ${DONE["$PARENT"]:-0} + 1 ))
+  DONE_BYTES["$PARENT"]=$(( ${DONE_BYTES["$PARENT"]:-0} + $(stat -f%z -- "$FILE") ))
 done < <(find "$DIR" -type f \
   -path "*/orig/*" \
   \( -iname "*.mpg"  -o -iname "*.mpeg" -o -iname "*.avi"  -o -iname "*.mov" \
@@ -117,24 +140,24 @@ if [[ ${#PENDING[@]} -eq 0 ]]; then
   exit 0
 fi
 
-printf "\nBy file count:\n"
-printf "  %7s  %6s  %s\n" "Pending" "Done" "Directory"
-printf "  %7s  %6s  %s\n" "-------" "----" "---------"
+printf "\nBy size:\n\n"
+printf "  %10s  %10s  %s\n" "Pending" "Done" "Directory"
+printf "  %10s  %10s  %s\n" "----------" "----------" "---------"
+
+for dir in "${!PENDING[@]}"; do
+  printf "%d\t%d\t%s\n" "${PENDING_BYTES[$dir]:-0}" "${DONE_BYTES[$dir]:-0}" "$dir"
+done | sort -t$'\t' -k1 -rn | head -n "$TOP" | \
+while IFS=$'\t' read -r pbytes dbytes dir; do
+  printf "  %10s  %10s  %s\n" "$(human_size "$pbytes")" "$(human_size "$dbytes")" "$dir"
+done
+
+printf "\nBy file count:\n\n"
+printf "  %10s  %10s  %s\n" "Pending" "Done" "Directory"
+printf "  %10s  %10s  %s\n" "----------" "----------" "---------"
 
 for dir in "${!PENDING[@]}"; do
   printf "%d\t%d\t%s\n" "${PENDING[$dir]}" "${DONE[$dir]:-0}" "$dir"
 done | sort -t$'\t' -k1 -rn | head -n "$TOP" | \
 while IFS=$'\t' read -r pending ndone dir; do
-  printf "  %7d  %6d  %s\n" "$pending" "$ndone" "$dir"
-done
-
-printf "\nBy pending size:\n"
-printf "  %10s  %s\n" "Size" "Directory"
-printf "  %10s  %s\n" "----------" "---------"
-
-for dir in "${!PENDING[@]}"; do
-  printf "%d\t%s\n" "${PENDING_BYTES[$dir]:-0}" "$dir"
-done | sort -t$'\t' -k1 -rn | head -n "$TOP" | \
-while IFS=$'\t' read -r bytes dir; do
-  printf "  %10s  %s\n" "$(human_size "$bytes")" "$dir"
+  printf "  %10d  %10d  %s\n" "$pending" "$ndone" "$dir"
 done
