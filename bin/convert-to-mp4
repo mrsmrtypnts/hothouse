@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
 
 usage() {
-  echo "Usage: $0 [--dry-run] [directory]" >&2
+  echo "Usage: $0 [--dry-run] [--no-recurse] [directory]" >&2
 }
 
 DRY_RUN=false
+RECURSE=true
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dry-run) DRY_RUN=true; shift ;;
+    --no-recurse) RECURSE=false; shift ;;
     -h|--help) usage; exit 0 ;;
     -*) echo "Unknown option: $1" >&2; usage; exit 1 ;;
     *) DIR="$1"; shift ;;
@@ -21,6 +23,9 @@ if [[ ! -d "$DIR" ]]; then
   echo "Error: not a directory: $DIR" >&2
   exit 1
 fi
+
+FIND_DEPTH_ARGS=()
+[[ "$RECURSE" == false ]] && FIND_DEPTH_ARGS=(-maxdepth 1)
 
 COUNT_ALREADY_DONE=0
 COUNT_REMUXED=0
@@ -222,7 +227,7 @@ while IFS= read -r -d $'\0' FILE; do
     fi
   fi
 
-done < <(find "$DIR" -type f \
+done < <(find "$DIR" "${FIND_DEPTH_ARGS[@]}" -type f \
   -not -path "*/orig/*" \
   \( -iname "*.mpg" -o -iname "*.mpeg" -o -iname "*.avi" -o -iname "*.mov" \
      -o -iname "*.mkv" -o -iname "*.wmv" -o -iname "*.flv" -o -iname "*.m4v" \
