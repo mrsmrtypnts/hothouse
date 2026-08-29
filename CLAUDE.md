@@ -32,9 +32,11 @@ Any time you change a file inside a Chrome extension directory (e.g. `chrome-ext
 
 Always confirm with the user before running `git push`, even immediately after a commit they already asked for. Committing does not imply push approval.
 
-# Testing breeder locally
+# Testing locally
 
-Never test against the user's real running instance, its real data dir, or its real Diffus API key. Spin up a throwaway instance instead:
+Never test against real data or credentials — spin up a throwaway instance/environment instead. What's being protected varies by subsystem (live credentials, sensitive content, an in-progress live instance), but the pattern is the same: fabricate what you need, keep the real thing out of conversation transcripts and out of harm's way from a test run.
+
+**breeder**: never against the real running instance, its real data dir, or its real API key.
 
 ```bash
 HOME=<scratch dir> BREEDER_PORT=<free port> BREEDER_API_KEY=dummy-test-key BREEDER_NO_BROWSER_OPEN=1 ./breeder/run.sh
@@ -43,6 +45,8 @@ HOME=<scratch dir> BREEDER_PORT=<free port> BREEDER_API_KEY=dummy-test-key BREED
 `BREEDER_NO_BROWSER_OPEN` is not optional — without it, the instance opens a real tab in the user's actual browser (`server.py`'s startup hook calls `webbrowser.open()` unconditionally otherwise).
 
 Only changes to `breeder/*.py` (`server.py`, `config.py`, `store.py`, `mutate.py`, `corpus.py`) require restarting the server process to take effect. Changes under `breeder/static/` or `breeder/static_v2/` only need a browser refresh — don't restart the user's real server for those, it interrupts anything currently generating.
+
+**trove**: never read, display, or analyze the real scan cache (`~/.cache/trove/cache.jsonl`), comparisons log (`~/.local/share/trove/comparisons.jsonl`), or `trove/model.json`. Use fabricated file paths and `HOME=<scratch dir>` instead (isolates the cache/config/comparisons-log paths, all `Path.home()`-relative). `trove/model.json` is the one exception `HOME` doesn't cover — it's resolved relative to the code (`Path(__file__).parent`), not `$HOME`, so it's always whatever checkout/worktree you're running from; working in your own worktree (see "Concurrent sessions" below) already isolates it as a side effect.
 
 # Studio's render() gotcha
 
