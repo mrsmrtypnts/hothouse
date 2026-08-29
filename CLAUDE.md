@@ -54,6 +54,4 @@ A running backlog of end-user feedback (fixes, improvements) for breeder, append
 
 # Concurrent sessions may be working on this repo
 
-More than one Claude session (different machines, different tasks) may have this repo open at once. `git commit` stages the entire index, not just what you just `git add`-ed — always run `git diff --cached --stat` immediately before committing to confirm only your own intended files are staged. Another session's unrelated staged changes can otherwise get swept into your commit unnoticed.
-
-This isn't only other human-driven sessions: a self-paced automated loop may also be running, periodically pulling `origin/main` and committing local fixes from `breeder/INBOX.md` (never pushing). Pull before you start working, and expect the occasional unrelated local commit from that loop to already be sitting ahead of `origin/main` when you check in.
+More than one Claude session — different machines, different tasks, including a self-paced automated loop that pulls `origin/main` and commits local fixes from `breeder/INBOX.md` (never pushing) — may have this repo open at once. Work in your own git worktree, not the shared checkout; merge or push from there when ready.
