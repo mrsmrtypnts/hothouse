@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+
+usage() {
+  echo "Usage: $0 [--top N] [directory]" >&2
+  echo "" >&2
+  echo "Finds every orig/ directory under [directory] (originals archived" >&2
+  echo "there by convert-to-mp4 once converted) and reports which ones are" >&2
+  echo "using the most disk space -- i.e. what you'd reclaim by deleting them." >&2
+}
+
+TOP=10
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --top) TOP="$2"; shift 2 ;;
+    -h|--help) usage; exit 0 ;;
+    -*) echo "Unknown option: $1" >&2; usage; exit 1 ;;
+    *) DIR="$1"; shift ;;
+  esac
+done
+
+DIR="${DIR:-.}"
+
+if [[ ! -d "$DIR" ]]; then
+  echo "Error: not a directory: $DIR" >&2
+  exit 1
+fi
+
+human_size() {
+  awk -v b="$1" 'BEGIN {
+    if (b >= 1000000000) printf "%.1f GB", b/1000000000
+    else printf "%.1f MB", b/1000000
+  }'
+}
+
+# Every orig/ directory holds originals convert-to-mp4 archived once it
+# produced a working .mp4 -- safe to delete once you've confirmed the .mp4
+# is good. Measure each with `du` (actual disk usage, not apparent size) so
+# the total matches what you'd really get back.
+mapfile -d '' ORIG_DIRS < <(find "$DIR" -type d -name orig -print0)
+
+if [[ ${#ORIG_DIRS[@]} -eq 0 ]]; then
+  echo "No orig/ directories found under $DIR"
+  exit 0
+fi
+
+echo "Measuring ${#ORIG_DIRS[@]} orig/ directories..." >&2
+
+TOTAL_BYTES=0
+CHECKED=0
+ROWS=()
+for dir in "${ORIG_DIRS[@]}"; do
+  CHECKED=$(( CHECKED + 1 ))
+  if [[ $(( CHECKED % 10 )) -eq 0 || $CHECKED -eq ${#ORIG_DIRS[@]} ]]; then
+    printf "  %d/%d measured\r" "$CHECKED" "${#ORIG_DIRS[@]}" >&2
+  fi
+  BYTES="$(du -sk -- "$dir" | awk '{print $1 * 1024}')"
+  TOTAL_BYTES=$(( TOTAL_BYTES + BYTES ))
+  ROWS+=("$BYTES"$'\t'"$dir")
+done
+echo "" >&2
+
+printf "\nTotal reclaimable: %s across %d orig/ director%s\n\n" \
+  "$(human_size "$TOTAL_BYTES")" "${#ORIG_DIRS[@]}" \
+  "$([[ ${#ORIG_DIRS[@]} -eq 1 ]] && echo y || echo ies)"
+
+printf "  %10s  %s\n" "Size" "Directory"
+printf "  %10s  %s\n" "----------" "---------"
+printf '%s\n' "${ROWS[@]}" | sort -t$'\t' -k1 -rn | head -n "$TOP" | \
+while IFS=$'\t' read -r bytes dir; do
+  printf "  %10s  %s\n" "$(human_size "$bytes")" "$dir"
+done
