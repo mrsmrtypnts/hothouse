@@ -6,7 +6,7 @@ set -e
 # panels — create a 1-, 2-, or 3-panel round-canon video (16:9 output)
 #
 # Usage:
-#   panels [--panels 1|2|3] [--audio all|none|N] <input1.mp4> [input2.mp4 ...]
+#   panels [--panels 1|2|3] [--audio all|none|N] [--offset SECONDS] <input1.mp4> [input2.mp4 ...]
 #
 # Options:
 #   --panels N        Number of panels: 1, 2, or 3 (default: 3)
@@ -14,19 +14,23 @@ set -e
 #                       all  — blend audio from all panels (amix)
 #                       none — strip all audio
 #                       N    — single track from panel N (1, 2, or 3)
+#   --offset SECONDS  Temporal offset between panels, in seconds (0 or more).
+#                       Default: duration / panels (the round-robin canon
+#                       effect). 0 puts all panels in sync.
 #
-# Panel layout:
+# Panel layout (OFFSET = duration/panels by default, or --offset value):
 #   1-panel: A          — original, cropped to 16:9
-#   2-panel: A | B      — A=original, B=offset +1/2
-#   3-panel: A | B | C  — A=original, B=offset +1/3, C=offset +2/3
+#   2-panel: A | B      — A=original, B=offset +OFFSET
+#   3-panel: A | B | C  — A=original, B=offset +OFFSET, C=offset +2*OFFSET
 # ---------------------------------------------------------------------------
 
 usage() {
-  echo "Usage: $0 [--panels 1|2|3] [--audio all|none|N] <input1.mp4> [input2.mp4 ...]" >&2
+  echo "Usage: $0 [--panels 1|2|3] [--audio all|none|N] [--offset SECONDS] <input1.mp4> [input2.mp4 ...]" >&2
 }
 
 PANELS=3
 AUDIO_MODE=all
+OFFSET_ARG=""
 INPUTS=()
 
 # Parse arguments
@@ -46,6 +50,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --audio=*)
       AUDIO_MODE="${1#*=}"
+      shift
+      ;;
+    --offset)
+      OFFSET_ARG="$2"
+      shift 2
+      ;;
+    --offset=*)
+      OFFSET_ARG="${1#*=}"
       shift
       ;;
     -h|--help)
@@ -81,6 +93,16 @@ if [[ "$AUDIO_MODE" != "all" && "$AUDIO_MODE" != "none" ]]; then
   fi
 fi
 
+if [[ -n "$OFFSET_ARG" ]]; then
+  if ! [[ "$OFFSET_ARG" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+    echo "Error: --offset must be a number of seconds (0 or more)" >&2
+    exit 1
+  fi
+  if [[ "$PANELS" == "1" ]]; then
+    echo "Note: --offset has no effect with --panels 1 (single panel, nothing to offset)." >&2
+  fi
+fi
+
 # ---------------------------------------------------------------------------
 # Output filename construction
 # Based on first input filename, insert "1panel"/"2panel"/"3panel" before
@@ -104,6 +126,11 @@ TMPDIR=$(mktemp -d)
 
 echo "Output will be: $OUTPUT"
 echo "Audio mode: $AUDIO_MODE"
+if [[ -n "$OFFSET_ARG" ]]; then
+  echo "Offset: ${OFFSET_ARG}s (fixed)"
+else
+  echo "Offset: duration / panels (round-robin, default)"
+fi
 
 # ---------------------------------------------------------------------------
 # Probe helpers
@@ -115,6 +142,32 @@ probe_vcodec()   { ffprobe -v quiet -select_streams v:0 -show_entries stream=cod
 probe_acodec()   { ffprobe -v quiet -select_streams a:0 -show_entries stream=codec_name -of csv=p=0 "$1"; }
 probe_duration() { ffprobe -v quiet -show_entries format=duration -of csv=p=0 "$1"; }
 probe_has_audio(){ ffprobe -v quiet -select_streams a:0 -show_entries stream=codec_type -of csv=p=0 "$1"; }
+
+# ---------------------------------------------------------------------------
+# build_rotated_panel SRC DURATION SHIFT_SECONDS OUT TAG
+#
+# Writes a copy of SRC to OUT that is cyclically shifted forward by
+# SHIFT_SECONDS: it starts SHIFT_SECONDS into SRC and wraps the head of SRC
+# onto the end. A shift of 0 (mod DURATION) is a no-op copy. TAG must be
+# unique per call so temp files don't collide.
+# ---------------------------------------------------------------------------
+build_rotated_panel() {
+  local src="$1" dur="$2" shift_secs="$3" out="$4" tag="$5"
+  local is_edge
+  is_edge=$(python3 -c "print(1 if $dur <= 0 or abs($shift_secs) < 1e-6 or abs($shift_secs - $dur) < 1e-6 else 0)")
+  if [[ "$is_edge" == "1" ]]; then
+    cp "$src" "$out"
+    return
+  fi
+  local head="$TMPDIR/rot_${tag}_head.mp4"
+  local tail="$TMPDIR/rot_${tag}_tail.mp4"
+  local list="$TMPDIR/rot_${tag}_concat.txt"
+  ffmpeg -y -i "$src" -t "$shift_secs"  -c:v libx264 -crf 18 -c:a aac "$head"
+  ffmpeg -y -i "$src" -ss "$shift_secs" -c:v libx264 -crf 18 -c:a aac "$tail"
+  echo "file '$tail'" >  "$list"
+  echo "file '$head'" >> "$list"
+  ffmpeg -y -f concat -safe 0 -i "$list" -c copy "$out"
+}
 
 # ---------------------------------------------------------------------------
 # If multiple inputs: check compatibility, concatenate
@@ -333,23 +386,19 @@ if [[ "$PANELS" -eq 1 ]]; then
   fi
 
 elif [[ "$PANELS" -eq 2 ]]; then
-  HALF=$(python3 -c "print($DURATION / 2)")
-  echo "Duration: $DURATION | Half: $HALF"
+  if [[ -n "$OFFSET_ARG" ]]; then
+    OFFSET_B=$(python3 -c "print($OFFSET_ARG % $DURATION if $DURATION > 0 else 0)")
+  else
+    OFFSET_B=$(python3 -c "print($DURATION / 2)")
+  fi
+  echo "Duration: $DURATION | Offset: $OFFSET_B"
 
-  PART1="$TMPDIR/part1.mp4"
-  PART2="$TMPDIR/part2.mp4"
-  ffmpeg -y -i "$CROPPED" -t "$HALF"  -c:v libx264 -crf 18 -c:a aac "$PART1"
-  ffmpeg -y -i "$CROPPED" -ss "$HALF" -c:v libx264 -crf 18 -c:a aac "$PART2"
-
-  # A = original, B = offset +1/2
+  # A = original, B = offset +OFFSET_B
   A="$TMPDIR/A.mp4"
   B="$TMPDIR/B.mp4"
 
   cp "$CROPPED" "$A"
-
-  echo "file '$PART2'" >  "$TMPDIR/concatB.txt"
-  echo "file '$PART1'" >> "$TMPDIR/concatB.txt"
-  ffmpeg -y -f concat -safe 0 -i "$TMPDIR/concatB.txt" -c copy "$B"
+  build_rotated_panel "$CROPPED" "$DURATION" "$OFFSET_B" "$B" "B"
 
   if [[ "$EFF_AUDIO" == "all" ]]; then
     ffmpeg -y -i "$A" -i "$B" \
@@ -376,34 +425,23 @@ elif [[ "$PANELS" -eq 2 ]]; then
   fi
 
 else
-  THIRD=$(python3 -c "print($DURATION / 3)")
-  TWO_THIRDS=$(python3 -c "print($DURATION * 2 / 3)")
-  echo "Duration: $DURATION | 1/3: $THIRD | 2/3: $TWO_THIRDS"
+  if [[ -n "$OFFSET_ARG" ]]; then
+    BASE_OFFSET="$OFFSET_ARG"
+  else
+    BASE_OFFSET=$(python3 -c "print($DURATION / 3)")
+  fi
+  OFFSET_B=$(python3 -c "print($BASE_OFFSET % $DURATION if $DURATION > 0 else 0)")
+  OFFSET_C=$(python3 -c "print(($BASE_OFFSET * 2) % $DURATION if $DURATION > 0 else 0)")
+  echo "Duration: $DURATION | Offset B: $OFFSET_B | Offset C: $OFFSET_C"
 
-  PART1="$TMPDIR/part1.mp4"
-  PART2="$TMPDIR/part2.mp4"
-  ffmpeg -y -i "$CROPPED" -t "$THIRD"        -c:v libx264 -crf 18 -c:a aac "$PART1"
-  ffmpeg -y -i "$CROPPED" -ss "$THIRD"       -c:v libx264 -crf 18 -c:a aac "$PART2"
-
-  PART1b="$TMPDIR/part1b.mp4"
-  PART2b="$TMPDIR/part2b.mp4"
-  ffmpeg -y -i "$CROPPED" -t "$TWO_THIRDS"   -c:v libx264 -crf 18 -c:a aac "$PART1b"
-  ffmpeg -y -i "$CROPPED" -ss "$TWO_THIRDS"  -c:v libx264 -crf 18 -c:a aac "$PART2b"
-
-  # A = original, B = offset +1/3, C = offset +2/3
+  # A = original, B = offset +OFFSET_B, C = offset +OFFSET_C
   A="$TMPDIR/A.mp4"
   B="$TMPDIR/B.mp4"
   C="$TMPDIR/C.mp4"
 
   cp "$CROPPED" "$A"
-
-  echo "file '$PART2'"  >  "$TMPDIR/concatB.txt"
-  echo "file '$PART1'"  >> "$TMPDIR/concatB.txt"
-  ffmpeg -y -f concat -safe 0 -i "$TMPDIR/concatB.txt" -c copy "$B"
-
-  echo "file '$PART2b'" >  "$TMPDIR/concatC.txt"
-  echo "file '$PART1b'" >> "$TMPDIR/concatC.txt"
-  ffmpeg -y -f concat -safe 0 -i "$TMPDIR/concatC.txt" -c copy "$C"
+  build_rotated_panel "$CROPPED" "$DURATION" "$OFFSET_B" "$B" "B"
+  build_rotated_panel "$CROPPED" "$DURATION" "$OFFSET_C" "$C" "C"
 
   if [[ "$EFF_AUDIO" == "all" ]]; then
     ffmpeg -y -i "$A" -i "$B" -i "$C" \
