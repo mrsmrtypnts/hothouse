@@ -129,9 +129,9 @@ fi
 # ---------------------------------------------------------------------------
 # Probe
 # ---------------------------------------------------------------------------
-probe_width()     { ffprobe -v quiet -select_streams v:0 -show_entries stream=width  -of csv=p=0 "$1"; }
-probe_height()    { ffprobe -v quiet -select_streams v:0 -show_entries stream=height -of csv=p=0 "$1"; }
-probe_has_audio() { ffprobe -v quiet -select_streams a:0 -show_entries stream=codec_type -of csv=p=0 "$1"; }
+probe_width()     { ffprobe -v quiet -select_streams v:0 -show_entries stream=width  -of default=nw=1:nk=1 "$1"; }
+probe_height()    { ffprobe -v quiet -select_streams v:0 -show_entries stream=height -of default=nw=1:nk=1 "$1"; }
+probe_has_audio() { ffprobe -v quiet -select_streams a:0 -show_entries stream=codec_type -of default=nw=1:nk=1 "$1"; }
 
 WIDTH=$(probe_width "$INPUT")
 HEIGHT=$(probe_height "$INPUT")

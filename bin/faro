@@ -89,12 +89,12 @@ trap 'rm -rf "$TMPDIR"' EXIT
 # ---------------------------------------------------------------------------
 # Probe helpers
 # ---------------------------------------------------------------------------
-probe_duration()  { ffprobe -v quiet -show_entries format=duration -of csv=p=0 "$1"; }
-probe_has_audio() { ffprobe -v quiet -select_streams a:0 -show_entries stream=codec_type -of csv=p=0 "$1"; }
-probe_width()     { ffprobe -v quiet -select_streams v:0 -show_entries stream=width  -of csv=p=0 "$1"; }
-probe_height()    { ffprobe -v quiet -select_streams v:0 -show_entries stream=height -of csv=p=0 "$1"; }
-probe_fps()       { ffprobe -v quiet -select_streams v:0 -show_entries stream=r_frame_rate -of csv=p=0 "$1"; }
-probe_vcodec()    { ffprobe -v quiet -select_streams v:0 -show_entries stream=codec_name -of csv=p=0 "$1"; }
+probe_duration()  { ffprobe -v quiet -show_entries format=duration -of default=nw=1:nk=1 "$1"; }
+probe_has_audio() { ffprobe -v quiet -select_streams a:0 -show_entries stream=codec_type -of default=nw=1:nk=1 "$1"; }
+probe_width()     { ffprobe -v quiet -select_streams v:0 -show_entries stream=width  -of default=nw=1:nk=1 "$1"; }
+probe_height()    { ffprobe -v quiet -select_streams v:0 -show_entries stream=height -of default=nw=1:nk=1 "$1"; }
+probe_fps()       { ffprobe -v quiet -select_streams v:0 -show_entries stream=r_frame_rate -of default=nw=1:nk=1 "$1"; }
+probe_vcodec()    { ffprobe -v quiet -select_streams v:0 -show_entries stream=codec_name -of default=nw=1:nk=1 "$1"; }
 
 # ---------------------------------------------------------------------------
 # Resolve input: named file(s), or buffer stdin to a temp file. Multiple

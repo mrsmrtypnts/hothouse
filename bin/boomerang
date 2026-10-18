@@ -74,7 +74,7 @@ fi
 
 OUTPUT="${NAME_WITHOUT_TIME} boomerang${TIME_SUFFIX}.${EXT}"
 
-HAS_AUDIO=$(ffprobe -v quiet -select_streams a:0 -show_entries stream=codec_type -of csv=p=0 "$INPUT")
+HAS_AUDIO=$(ffprobe -v quiet -select_streams a:0 -show_entries stream=codec_type -of default=nw=1:nk=1 "$INPUT")
 
 # Resolve effective audio mode: fall back to none if no audio track
 if [[ -z "$HAS_AUDIO" ]]; then
