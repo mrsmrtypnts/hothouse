@@ -134,14 +134,18 @@ fi
 
 # ---------------------------------------------------------------------------
 # Probe helpers
+#
+# Use -of default=nw=1:nk=1 rather than csv=p=0: for files with stream side
+# data (e.g. an iPhone display matrix), csv appends a trailing comma ("1440,"),
+# which breaks the arithmetic and python3 -c expressions below.
 # ---------------------------------------------------------------------------
-probe_width()    { ffprobe -v quiet -select_streams v:0 -show_entries stream=width    -of csv=p=0 "$1"; }
-probe_height()   { ffprobe -v quiet -select_streams v:0 -show_entries stream=height   -of csv=p=0 "$1"; }
-probe_fps()      { ffprobe -v quiet -select_streams v:0 -show_entries stream=r_frame_rate -of csv=p=0 "$1"; }
-probe_vcodec()   { ffprobe -v quiet -select_streams v:0 -show_entries stream=codec_name -of csv=p=0 "$1"; }
-probe_acodec()   { ffprobe -v quiet -select_streams a:0 -show_entries stream=codec_name -of csv=p=0 "$1"; }
-probe_duration() { ffprobe -v quiet -show_entries format=duration -of csv=p=0 "$1"; }
-probe_has_audio(){ ffprobe -v quiet -select_streams a:0 -show_entries stream=codec_type -of csv=p=0 "$1"; }
+probe_width()    { ffprobe -v quiet -select_streams v:0 -show_entries stream=width    -of default=nw=1:nk=1 "$1"; }
+probe_height()   { ffprobe -v quiet -select_streams v:0 -show_entries stream=height   -of default=nw=1:nk=1 "$1"; }
+probe_fps()      { ffprobe -v quiet -select_streams v:0 -show_entries stream=r_frame_rate -of default=nw=1:nk=1 "$1"; }
+probe_vcodec()   { ffprobe -v quiet -select_streams v:0 -show_entries stream=codec_name -of default=nw=1:nk=1 "$1"; }
+probe_acodec()   { ffprobe -v quiet -select_streams a:0 -show_entries stream=codec_name -of default=nw=1:nk=1 "$1"; }
+probe_duration() { ffprobe -v quiet -show_entries format=duration -of default=nw=1:nk=1 "$1"; }
+probe_has_audio(){ ffprobe -v quiet -select_streams a:0 -show_entries stream=codec_type -of default=nw=1:nk=1 "$1"; }
 
 # ---------------------------------------------------------------------------
 # build_rotated_panel SRC DURATION SHIFT_SECONDS OUT TAG
@@ -205,14 +209,14 @@ if [[ ${#INPUTS[@]} -gt 1 ]]; then
   MISMATCH_REASONS=()
 
   # Helper: index of the first stream of a given type (v or a)
-  first_stream_index() { ffprobe -v quiet -select_streams "$2" -show_entries stream=index -of csv=p=0 "$1" | head -1; }
+  first_stream_index() { ffprobe -v quiet -select_streams "$2" -show_entries stream=index -of default=nw=1:nk=1 "$1" | head -1; }
 
   for f in "${INPUTS[@]}"; do
     W=$(probe_width  "$f")
     H=$(probe_height "$f")
     FPS=$(probe_fps  "$f")
     VC=$(probe_vcodec "$f")
-    VSTREAMS=$(ffprobe -v quiet -select_streams v -show_entries stream=index -of csv=p=0 "$f" | wc -l | tr -d ' ')
+    VSTREAMS=$(ffprobe -v quiet -select_streams v -show_entries stream=index -of default=nw=1:nk=1 "$f" | wc -l | tr -d ' ')
     VI=$(first_stream_index "$f" v)
     AI=$(first_stream_index "$f" a)
 
@@ -313,6 +317,11 @@ fi
 # ---------------------------------------------------------------------------
 WIDTH=$(probe_width  "$SOURCE")
 HEIGHT=$(probe_height "$SOURCE")
+
+if ! [[ "$WIDTH" =~ ^[0-9]+$ && "$HEIGHT" =~ ^[0-9]+$ ]]; then
+  echo "Error: could not read video dimensions from $SOURCE (got width='$WIDTH' height='$HEIGHT')" >&2
+  exit 1
+fi
 
 if [[ "$PANELS" -eq 1 ]]; then
   TARGET_W=$WIDTH
