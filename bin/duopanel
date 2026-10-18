@@ -133,9 +133,26 @@ probe_width()     { ffprobe -v quiet -select_streams v:0 -show_entries stream=wi
 probe_height()    { ffprobe -v quiet -select_streams v:0 -show_entries stream=height -of default=nw=1:nk=1 "$1"; }
 probe_has_audio() { ffprobe -v quiet -select_streams a:0 -show_entries stream=codec_type -of default=nw=1:nk=1 "$1"; }
 
-WIDTH=$(probe_width "$INPUT")
-HEIGHT=$(probe_height "$INPUT")
-if [[ -z "$WIDTH" || -z "$HEIGHT" ]]; then
+# Displayed frame size "WxH" as ffmpeg's filter graph will see it: decode one
+# frame (so H.264 frame cropping and the display-matrix rotation are applied,
+# exactly as ffmpeg's autorotate does) and probe that. Plain stream width/height
+# are the stored size, which is wrong for e.g. rotated iPhone clips with
+# cropping, and makes the geometry disagree with the real filter input.
+probe_display_size() {
+  local png w h
+  png="$(mktemp -d)/frame.png"
+  if ffmpeg -v error -y -i "$1" -an -frames:v 1 "$png" 2>/dev/null; then
+    w=$(ffprobe -v quiet -show_entries stream=width  -of default=nw=1:nk=1 "$png")
+    h=$(ffprobe -v quiet -show_entries stream=height -of default=nw=1:nk=1 "$png")
+  fi
+  rm -rf "$(dirname "$png")"
+  echo "${w}x${h}"
+}
+
+DISPLAY_SIZE=$(probe_display_size "$INPUT")
+WIDTH="${DISPLAY_SIZE%x*}"
+HEIGHT="${DISPLAY_SIZE#*x}"
+if ! [[ "$WIDTH" =~ ^[0-9]+$ && "$HEIGHT" =~ ^[0-9]+$ ]]; then
   echo "Error: could not determine dimensions of input" >&2
   exit 1
 fi
