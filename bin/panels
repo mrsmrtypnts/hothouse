@@ -7,9 +7,12 @@ set -e
 #
 # Usage:
 #   panels [--panels 1|2|3] [--audio all|none|N] [--offset SECONDS] <input1.mp4> [input2.mp4 ...]
+#   1panel | 2panel | 3panel [other options] <input1.mp4> [input2.mp4 ...]
 #
 # Options:
-#   --panels N        Number of panels: 1, 2, or 3 (default: 3)
+#   --panels N        Number of panels: 1, 2, or 3 (default: 3, or the N from
+#                       the invoked name — 1panel, 2panel and 3panel are
+#                       symlinks to this script; an explicit --panels wins)
 #   --audio MODE      Audio handling: all (default), none, or a panel number
 #                       all  — blend audio from all panels (amix)
 #                       none — strip all audio
@@ -25,10 +28,16 @@ set -e
 # ---------------------------------------------------------------------------
 
 usage() {
-  echo "Usage: $0 [--panels 1|2|3] [--audio all|none|N] [--offset SECONDS] <input1.mp4> [input2.mp4 ...]" >&2
+  echo "Usage: $(basename "$0") [--panels 1|2|3] [--audio all|none|N] [--offset SECONDS] <input1.mp4> [input2.mp4 ...]" >&2
 }
 
 PANELS=3
+# Invoked as 1panel / 2panel / 3panel (symlinks to this script): the name sets the default.
+case "$(basename "$0")" in
+  1panel) PANELS=1 ;;
+  2panel) PANELS=2 ;;
+  3panel) PANELS=3 ;;
+esac
 AUDIO_MODE=all
 OFFSET_ARG=""
 INPUTS=()
