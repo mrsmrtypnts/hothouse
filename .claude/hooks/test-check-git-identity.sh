@@ -85,6 +85,7 @@ check "pull, good identity"                     0 "$G" "$G" "git pull"
 check "push, wrong origin"                      2 "$T/wrongorigin" "$T/wrongorigin" "git push origin main"
 askcheck "push asks for approval"               1 "$G" "git push origin main"
 askcheck "commit does not ask"                  0 "$G" "git commit -m x"
+askcheck "blocked push does not ask"            0 "$B" "git push origin main"
 askcheck "pull does not ask"                    0 "$G" "git pull"
 raw   "malformed payload without git: allowed"  0 "$G" 'not json at all'
 raw   "malformed payload mentioning git push: blocked (fail closed)" 2 "$G" 'not json {"command":"git push origin main"'
