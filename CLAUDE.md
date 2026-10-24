@@ -24,6 +24,27 @@ If a different account is active, switch first (`gh auth switch --hostname githu
 
 Re-verify both of the above every time, on every machine — never assume they're already correct.
 
+## The hook
+
+`.claude/hooks/check-git-identity.sh` (a PreToolUse hook on Bash, registered in `.claude/settings.json`) enforces this and blocks with exit 2. If it blocks, fix the cause; don't work around it. It checks commits and the other commands that create commits (merge, pull, rebase, cherry-pick, revert, am); for pushes it also checks `origin`, the `gh` active account and the credential account, then forces a permission prompt so every push needs its own explicit yes.
+
+Tests: `.claude/hooks/test-check-git-identity.sh`. Run it after changing the hook.
+
+**Known tradeoff:** the hook scans the whole command text. A Bash command that merely *contains* identity-override text (`--author`, `GIT_AUTHOR_NAME=`, or `git config user.name VALUE`) next to a git commit or push is blocked. Write such text with the Write/Edit tools instead of a Bash heredoc, and reword commit messages that need to mention it.
+
+## Setting up a fresh clone
+
+`.git/config` isn't versioned, so a new clone has neither the identity nor the credential pin. Run once, in the clone:
+
+```bash
+git config user.name "mrsmrtypnts"
+git config user.email "310750161+mrsmrtypnts@users.noreply.github.com"
+git config --add credential.helper ''
+git config --add credential.helper '!f() { test "$1" = get && echo username=mrsmrtypnts && echo "password=$(gh auth token -u mrsmrtypnts)"; }; f'
+```
+
+The empty `credential.helper` entry clears any inherited helper (such as the macOS keychain one) so pushes always authenticate as `mrsmrtypnts`. Then check with `git var GIT_AUTHOR_IDENT` and run the tests.
+
 # Chrome extension versioning
 
 Any time you change a file inside a Chrome extension directory (e.g. `chrome-extensions/chrome-image-downloader/`, `chrome-extensions/post-media-downloader/`), bump the `version` field in that extension's `manifest.json` as part of the same change. This applies to any change, not just user-facing ones — it's how reloading the unpacked extension is confirmed to have picked up the new code.
