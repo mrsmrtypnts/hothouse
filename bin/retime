@@ -1,0 +1,204 @@
+#!/usr/bin/env bash
+#
+# Stretch (or squeeze) a video to an exact target duration, preserving audio
+# pitch. With multiple inputs, they're concatenated in order first, then the
+# whole result is stretched.
+#
+# Video is retimed with setpts and resampled to a constant frame rate (frames
+# are duplicated when slowing down, dropped when speeding up). Audio is
+# retimed with atempo, which changes tempo without changing pitch.
+
+set -euo pipefail
+
+usage() {
+  cat >&2 <<'EOF'
+Usage: retime [-o output.mp4] <target> <input>...
+
+  target   Duration of the output: seconds (12, 12.5), m:ss (1:30, 1:30.5),
+           or the filename style 1'30" (quote it for the shell).
+  input    One or more videos. Multiple inputs are concatenated in order
+           (scaled/padded to the first input's size and frame rate), then
+           stretched as a whole.
+
+  -o, --output  Output path. Default: "<first input name> <target>.mp4",
+                replacing any existing m'ss" suffix on the name.
+EOF
+}
+
+OUTPUT=""
+POSITIONAL=()
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -o|--output) OUTPUT="$2"; shift 2 ;;
+    --output=*) OUTPUT="${1#*=}"; shift ;;
+    -h|--help) usage; exit 0 ;;
+    --) shift; POSITIONAL+=("$@"); break ;;
+    -*) echo "Unknown option: $1" >&2; usage; exit 1 ;;
+    *) POSITIONAL+=("$1"); shift ;;
+  esac
+done
+
+if [[ ${#POSITIONAL[@]} -lt 2 ]]; then
+  usage
+  exit 1
+fi
+
+TARGET_RAW="${POSITIONAL[0]}"
+INPUTS=("${POSITIONAL[@]:1}")
+
+# --- parse target duration into seconds ---
+if [[ "$TARGET_RAW" =~ ^([0-9]+)"'"([0-9]+(\.[0-9]+)?)\"?$ ]]; then
+  TARGET=$(awk -v m="${BASH_REMATCH[1]}" -v s="${BASH_REMATCH[2]}" 'BEGIN{printf "%.6f", m*60+s}')
+elif [[ "$TARGET_RAW" =~ ^([0-9]+):([0-9]+(\.[0-9]+)?)$ ]]; then
+  TARGET=$(awk -v m="${BASH_REMATCH[1]}" -v s="${BASH_REMATCH[2]}" 'BEGIN{printf "%.6f", m*60+s}')
+elif [[ "$TARGET_RAW" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+  TARGET=$(awk -v s="$TARGET_RAW" 'BEGIN{printf "%.6f", s}')
+else
+  echo "Error: can't parse target duration: $TARGET_RAW" >&2
+  exit 1
+fi
+if awk -v t="$TARGET" 'BEGIN{exit !(t <= 0)}'; then
+  echo "Error: target duration must be positive" >&2
+  exit 1
+fi
+
+for f in "${INPUTS[@]}"; do
+  if [[ ! -f "$f" ]]; then
+    echo "Error: file not found: $f" >&2
+    exit 1
+  fi
+done
+
+probe() {  # probe <file> <stream-selector> <entries>
+  ffprobe -v error -select_streams "$2" -show_entries "$3" -of default=nw=1:nk=1 "$1" | head -1
+}
+
+# --- reference geometry / frame rate from the first input ---
+FIRST="${INPUTS[0]}"
+W=$(probe "$FIRST" v:0 stream=width)
+H=$(probe "$FIRST" v:0 stream=height)
+FPS=$(probe "$FIRST" v:0 stream=avg_frame_rate)
+if [[ -z "$W" || -z "$H" ]]; then
+  echo "Error: no video stream in $FIRST" >&2
+  exit 1
+fi
+if [[ -z "$FPS" || "$FPS" == "0/0" ]]; then
+  FPS=$(probe "$FIRST" v:0 stream=r_frame_rate)
+fi
+
+# --- build per-input chains and sum durations ---
+FILTER=""
+CONCAT_IN=""
+TOTAL=0
+FFMPEG_INPUTS=()
+ANY_AUDIO=false
+declare -a DURS HAS_A
+
+for i in "${!INPUTS[@]}"; do
+  f="${INPUTS[$i]}"
+  FFMPEG_INPUTS+=(-i "$f")
+  d=$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 "$f")
+  if [[ -z "$d" || "$d" == "N/A" ]]; then
+    echo "Error: can't determine duration of $f" >&2
+    exit 1
+  fi
+  DURS[$i]="$d"
+  TOTAL=$(awk -v a="$TOTAL" -v b="$d" 'BEGIN{printf "%.6f", a+b}')
+  if [[ -n "$(probe "$f" a:0 stream=codec_type)" ]]; then
+    HAS_A[$i]=true
+    ANY_AUDIO=true
+  else
+    HAS_A[$i]=false
+  fi
+done
+
+for i in "${!INPUTS[@]}"; do
+  d="${DURS[$i]}"
+  # Trim each segment to its container duration so video and audio line up
+  # at every concat boundary even when one stream runs slightly long.
+  FILTER+="[$i:v:0]scale=${W}:${H}:force_original_aspect_ratio=decrease,"
+  FILTER+="pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=${FPS},"
+  FILTER+="trim=duration=${d},setpts=PTS-STARTPTS[v$i];"
+  if [[ "$ANY_AUDIO" == true ]]; then
+    if [[ "${HAS_A[$i]}" == true ]]; then
+      FILTER+="[$i:a:0]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,"
+      FILTER+="apad,atrim=duration=${d},asetpts=PTS-STARTPTS[a$i];"
+    else
+      FILTER+="anullsrc=r=48000:cl=stereo,aformat=sample_fmts=fltp,"
+      FILTER+="atrim=duration=${d},asetpts=PTS-STARTPTS[a$i];"
+    fi
+    CONCAT_IN+="[v$i][a$i]"
+  else
+    CONCAT_IN+="[v$i]"
+  fi
+done
+
+N=${#INPUTS[@]}
+if [[ "$ANY_AUDIO" == true ]]; then
+  FILTER+="${CONCAT_IN}concat=n=${N}:v=1:a=1[cv][ca];"
+else
+  FILTER+="${CONCAT_IN}concat=n=${N}:v=1:a=0[cv];"
+fi
+
+# factor > 1 means the output is longer (slowed down).
+FACTOR=$(awk -v t="$TARGET" -v s="$TOTAL" 'BEGIN{printf "%.9f", t/s}')
+TEMPO=$(awk -v f="$FACTOR" 'BEGIN{printf "%.9f", 1/f}')
+
+FILTER+="[cv]setpts=PTS*${FACTOR},fps=${FPS},tpad=stop_mode=clone:stop_duration=1[v]"
+
+if [[ "$ANY_AUDIO" == true ]]; then
+  # atempo accepts 0.5..100; chain stages of 0.5 for bigger slowdowns.
+  ATEMPO=""
+  t="$TEMPO"
+  while awk -v t="$t" 'BEGIN{exit !(t < 0.5)}'; do
+    ATEMPO+="atempo=0.5,"
+    t=$(awk -v t="$t" 'BEGIN{printf "%.9f", t/0.5}')
+  done
+  ATEMPO+="atempo=${t}"
+  # apad + output -t guarantee the audio track spans exactly the target.
+  FILTER+=";[ca]${ATEMPO},apad[a]"
+fi
+
+# --- output name ---
+if [[ -z "$OUTPUT" ]]; then
+  base="$(basename "${FIRST%.*}")"
+  dir="$(dirname "$FIRST")"
+  if [[ "$base" =~ ^(.*[^[:space:]])[[:space:]]+[0-9]+"'"[0-9]+(\.[0-9]+)?\"$ ]]; then
+    base="${BASH_REMATCH[1]}"
+  fi
+  SUFFIX=$(awk -v t="$TARGET" 'BEGIN{
+    m = int(t/60); s = t - m*60;
+    if (s == int(s)) printf "%d\x27%02d\"", m, s;
+    else { str = sprintf("%05.2f", s); sub(/0+$/, "", str); printf "%d\x27%s\"", m, str }
+  }')
+  OUTPUT="$dir/$base $SUFFIX.mp4"
+fi
+
+for f in "${INPUTS[@]}"; do
+  if [[ "$(cd "$(dirname "$f")" && pwd)/$(basename "$f")" == "$(cd "$(dirname "$OUTPUT")" && pwd)/$(basename "$OUTPUT")" ]]; then
+    echo "Error: output would overwrite input: $OUTPUT" >&2
+    exit 1
+  fi
+done
+
+printf 'Inputs: %d, total %.3fs -> target %.3fs (x%.4f length, %sx tempo)\n' \
+  "$N" "$TOTAL" "$TARGET" "$FACTOR" "$(printf '%.4f' "$TEMPO")"
+echo "Output: $OUTPUT"
+
+MAPS=(-map "[v]")
+CODECS=(-c:v libx264 -crf 18 -preset fast -pix_fmt yuv420p)
+if [[ "$ANY_AUDIO" == true ]]; then
+  MAPS+=(-map "[a]")
+  CODECS+=(-c:a aac -b:a 192k)
+fi
+
+ffmpeg -hide_banner -loglevel warning -stats -y \
+  "${FFMPEG_INPUTS[@]}" \
+  -filter_complex "$FILTER" \
+  "${MAPS[@]}" "${CODECS[@]}" \
+  -t "$TARGET" -movflags +faststart \
+  "$OUTPUT"
+
+ACTUAL=$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 "$OUTPUT")
+echo "Done: $OUTPUT (${ACTUAL}s)"
