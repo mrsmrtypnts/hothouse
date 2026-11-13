@@ -1,0 +1,219 @@
+#!/usr/bin/env bash
+#
+# Concatenate one or more videos, and repeat the whole sequence n times.
+#
+#   concat 3 clip.mp4            clip, three times in a row
+#   concat a.mp4 b.mp4 c.mp4     a, b, c once each
+#   concat 2 a.mp4 b.mp4         a, b, a, b
+#
+# With a single input the repeats are stream-copied (no re-encode, lossless).
+# With multiple inputs they're normalized to the first input's size and frame
+# rate (silence filled for inputs without audio) and encoded once, then that
+# result is stream-copied n times.
+
+set -euo pipefail
+
+usage() {
+  cat >&2 <<'EOF'
+Usage: concat [-o output] [n] <input>...
+
+  n        Positive integer: how many times to repeat the whole sequence.
+           Default 1. (Also accepted as -n N.)
+  input    One or more videos, concatenated in order. Multiple inputs are
+           scaled/padded to the first input's size and frame rate.
+
+  -o, --output  Output path. Default: next to the first input,
+                "<name> x<n>.<ext>" for one input,
+                "<name> concat[ x<n>].mp4" for several.
+EOF
+}
+
+OUTPUT=""
+N=""
+POSITIONAL=()
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -o|--output) OUTPUT="$2"; shift 2 ;;
+    --output=*) OUTPUT="${1#*=}"; shift ;;
+    -n|--times) N="$2"; shift 2 ;;
+    --times=*) N="${1#*=}"; shift ;;
+    -h|--help) usage; exit 0 ;;
+    --) shift; POSITIONAL+=("$@"); break ;;
+    -*) echo "Unknown option: $1" >&2; usage; exit 1 ;;
+    *) POSITIONAL+=("$1"); shift ;;
+  esac
+done
+
+# A leading all-digits argument is n, unless it's actually a file name.
+if [[ -z "$N" && ${#POSITIONAL[@]} -gt 0 && "${POSITIONAL[0]}" =~ ^[0-9]+$ && ! -f "${POSITIONAL[0]}" ]]; then
+  N="${POSITIONAL[0]}"
+  POSITIONAL=("${POSITIONAL[@]:1}")
+fi
+N="${N:-1}"
+
+if [[ ! "$N" =~ ^[0-9]+$ ]] || (( 10#$N < 1 )); then
+  echo "Error: n must be a positive integer, got: $N" >&2
+  exit 1
+fi
+N=$((10#$N))
+
+if [[ ${#POSITIONAL[@]} -lt 1 ]]; then
+  usage
+  exit 1
+fi
+INPUTS=("${POSITIONAL[@]}")
+COUNT=${#INPUTS[@]}
+
+if (( N == 1 && COUNT == 1 )); then
+  echo "Error: nothing to do (one input, n=1)" >&2
+  exit 1
+fi
+
+for f in "${INPUTS[@]}"; do
+  if [[ ! -f "$f" ]]; then
+    echo "Error: file not found: $f" >&2
+    exit 1
+  fi
+done
+
+probe() {  # probe <file> <stream-selector> <entries>
+  ffprobe -v error -select_streams "$2" -show_entries "$3" -of default=nw=1:nk=1 "$1" | head -1
+}
+
+abspath() { echo "$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"; }
+
+# --- output name ---
+FIRST="${INPUTS[0]}"
+if [[ -z "$OUTPUT" ]]; then
+  base="$(basename "${FIRST%.*}")"
+  dir="$(dirname "$FIRST")"
+  if (( COUNT == 1 )); then
+    ext="${FIRST##*.}"
+    [[ "$ext" == "$FIRST" ]] && ext=mp4
+    OUTPUT="$dir/$base x$N.$ext"
+  elif (( N == 1 )); then
+    OUTPUT="$dir/$base concat.mp4"
+  else
+    OUTPUT="$dir/$base concat x$N.mp4"
+  fi
+fi
+
+OUT_ABS="$(abspath "$OUTPUT")"
+for f in "${INPUTS[@]}"; do
+  if [[ "$(abspath "$f")" == "$OUT_ABS" ]]; then
+    echo "Error: output would overwrite input: $OUTPUT" >&2
+    exit 1
+  fi
+done
+
+# --- single input: stream-copy loop, no re-encode ---
+if (( COUNT == 1 )); then
+  echo "Input: $FIRST, x$N (stream copy)"
+  echo "Output: $OUTPUT"
+  ffmpeg -hide_banner -loglevel warning -stats -y \
+    -stream_loop $((N - 1)) -i "$FIRST" \
+    -map 0 -c copy -movflags +faststart \
+    "$OUTPUT"
+  ACTUAL=$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 "$OUTPUT")
+  echo "Done: $OUTPUT (${ACTUAL}s)"
+  exit 0
+fi
+
+# --- multiple inputs: normalize + concat once ---
+W=$(probe "$FIRST" v:0 stream=width)
+H=$(probe "$FIRST" v:0 stream=height)
+FPS=$(probe "$FIRST" v:0 stream=avg_frame_rate)
+if [[ -z "$W" || -z "$H" ]]; then
+  echo "Error: no video stream in $FIRST" >&2
+  exit 1
+fi
+if [[ -z "$FPS" || "$FPS" == "0/0" ]]; then
+  FPS=$(probe "$FIRST" v:0 stream=r_frame_rate)
+fi
+
+FILTER=""
+CONCAT_IN=""
+FFMPEG_INPUTS=()
+ANY_AUDIO=false
+declare -a DURS HAS_A
+
+for i in "${!INPUTS[@]}"; do
+  f="${INPUTS[$i]}"
+  FFMPEG_INPUTS+=(-i "$f")
+  d=$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 "$f")
+  if [[ -z "$d" || "$d" == "N/A" ]]; then
+    echo "Error: can't determine duration of $f" >&2
+    exit 1
+  fi
+  if [[ -z "$(probe "$f" v:0 stream=codec_type)" ]]; then
+    echo "Error: no video stream in $f" >&2
+    exit 1
+  fi
+  DURS[$i]="$d"
+  if [[ -n "$(probe "$f" a:0 stream=codec_type)" ]]; then
+    HAS_A[$i]=true
+    ANY_AUDIO=true
+  else
+    HAS_A[$i]=false
+  fi
+done
+
+for i in "${!INPUTS[@]}"; do
+  d="${DURS[$i]}"
+  # Trim each segment to its container duration so video and audio line up
+  # at every concat boundary even when one stream runs slightly long.
+  FILTER+="[$i:v:0]scale=${W}:${H}:force_original_aspect_ratio=decrease,"
+  FILTER+="pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=${FPS},"
+  FILTER+="trim=duration=${d},setpts=PTS-STARTPTS[v$i];"
+  if [[ "$ANY_AUDIO" == true ]]; then
+    if [[ "${HAS_A[$i]}" == true ]]; then
+      FILTER+="[$i:a:0]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,"
+      FILTER+="apad,atrim=duration=${d},asetpts=PTS-STARTPTS[a$i];"
+    else
+      FILTER+="anullsrc=r=48000:cl=stereo,aformat=sample_fmts=fltp,"
+      FILTER+="atrim=duration=${d},asetpts=PTS-STARTPTS[a$i];"
+    fi
+    CONCAT_IN+="[v$i][a$i]"
+  else
+    CONCAT_IN+="[v$i]"
+  fi
+done
+
+MAPS=(-map "[v]")
+CODECS=(-c:v libx264 -crf 18 -preset fast -pix_fmt yuv420p)
+if [[ "$ANY_AUDIO" == true ]]; then
+  FILTER+="${CONCAT_IN}concat=n=${COUNT}:v=1:a=1[v][a]"
+  MAPS+=(-map "[a]")
+  CODECS+=(-c:a aac -b:a 192k)
+else
+  FILTER+="${CONCAT_IN}concat=n=${COUNT}:v=1:a=0[v]"
+fi
+
+echo "Inputs: $COUNT, x$N"
+echo "Output: $OUTPUT"
+
+if (( N == 1 )); then
+  ONCE="$OUTPUT"
+else
+  TMPDIR_=$(mktemp -d)
+  trap 'rm -rf "$TMPDIR_"' EXIT
+  ONCE="$TMPDIR_/once.mp4"
+fi
+
+ffmpeg -hide_banner -loglevel warning -stats -y \
+  "${FFMPEG_INPUTS[@]}" \
+  -filter_complex "$FILTER" \
+  "${MAPS[@]}" "${CODECS[@]}" \
+  -movflags +faststart \
+  "$ONCE"
+
+if (( N > 1 )); then
+  ffmpeg -hide_banner -loglevel warning -stats -y \
+    -stream_loop $((N - 1)) -i "$ONCE" \
+    -map 0 -c copy -movflags +faststart \
+    "$OUTPUT"
+fi
+
+ACTUAL=$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 "$OUTPUT")
+echo "Done: $OUTPUT (${ACTUAL}s)"

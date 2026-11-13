@@ -11,6 +11,7 @@ Each writes a new video next to the input; the input is never modified.
 | Script | What it does |
 |---|---|
 | `boomerang` | Plays the clip forward then backward. `--audio reverse\|forward\|none`. |
+| `concat` | Concatenates one or more clips and repeats the sequence N times (`concat 3 a.mp4`, `concat a.mp4 b.mp4`, `concat 2 a.mp4 b.mp4`). A single input is looped losslessly by stream copy. |
 | `crop-black-margin` | Detects and crops black bars (letterbox/pillarbox). |
 | `duopanel` | Turns a portrait (or narrower-than-16:9) clip into a 16:9 composite: the original on the right, a scaled crop of it filling the left. |
 | `faro` | Slices the timeline into N segments and riffles them like a faro shuffle. Accepts multiple inputs (concatenated) or stdin. |
